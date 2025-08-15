@@ -73,11 +73,13 @@ df = load_data()
 if not df.empty:
     all_pairs = sorted(df['pair'].unique())
     
-    # Eliminamos la selección por defecto
+    # Establecemos el par por defecto
+    default_selection = ['kHYPE/WHYPE'] if 'kHYPE/WHYPE' in all_pairs else []
+    
     selected_pairs = st.multiselect(
         "Selecciona los pares que quieres comparar:",
         options=all_pairs,
-        default=[] # No hay selección por defecto
+        default=default_selection
     )
     
     st.markdown("---")
@@ -90,6 +92,7 @@ if not df.empty:
                 st.subheader("Calculadora APY para 'gliquid_test'")
                 col1, col2, col3 = st.columns(3)
                 with col1:
+                    # Usamos una clave única para cada input para evitar conflictos en Streamlit
                     new_tier = st.number_input("Tier", value=1.0, step=0.01, format="%.2f", key=f"tier_{pair}")
                 with col2:
                     new_tvl = st.number_input("TVL", value=100000, step=1000, key=f"tvl_{pair}")
@@ -99,7 +102,7 @@ if not df.empty:
                 # Calcular el nuevo APY
                 if new_tvl > 0:
                     # Fórmula: (tier * volumen / tvl) * 100 (para %) * 365 (anual)
-                    new_apy = (new_tier * new_volume / new_tvl) * 100 * 365
+                    new_apy = (new_tier * new_volume / new_tvl) * 365
                 else:
                     new_apy = 0
 
