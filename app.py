@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import requests # Importamos la librería requests
+from supabase import create_client, Client
+import os
 
 # --- Configuración de la página de Streamlit ---
 st.set_page_config(
@@ -10,57 +11,44 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- Credenciales de Supabase ---
-# Obtenemos las credenciales desde los secretos de Streamlit.
+# --- Conexión a Supabase ---
+# Intenta obtener las credenciales desde los secretos de Streamlit.
 try:
     supabase_url = st.secrets["SUPABASE_URL"]
     supabase_key = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(supabase_url, supabase_key)
 except KeyError:
+    # Si las credenciales no se encuentran en los secretos, muestra un error claro.
     st.error("Error: No se encontraron las credenciales de Supabase. Asegúrate de configurar tu archivo `secrets.toml`.")
-    st.stop()
+    st.stop() # Detiene la ejecución si no hay credenciales.
 
-# --- Función para cargar y procesar los datos con Requests ---
-@st.cache_data(ttl=600) # La caché expira cada 10 minutos
+# --- Función para cargar y procesar los datos ---
+@st.cache_data(ttl=600) # La caché expira cada 10 minutos (600 segundos)
 def load_data():
     """
-    Carga los datos desde la API REST de Supabase usando requests,
+    Carga los datos desde la tabla 'Tabla2' en Supabase,
     filtrando por blockchain = 'hyperevm'.
     """
-    # Columnas que queremos seleccionar de la tabla.
-    columns_to_select = "pair,tier,dex,apy_24h,tvl,volume24h,fees24h"
-    
-    # Construimos la URL completa para la petición GET.
-    # Añadimos los parámetros para seleccionar columnas y filtrar por blockchain.
-    url = f"{supabase_url}/rest/v1/Tabla2?select={columns_to_select}&blockchain=eq.hyperevm"
-    
-    # Preparamos los headers para la autenticación, como en el ejemplo de cURL.
-    headers = {
-        "apikey": supabase_key,
-        "Authorization": f"Bearer {supabase_key}"
-    }
-    
     try:
-        # Realizamos la petición GET a la API.
-        response = requests.get(url, headers=headers)
+        # Columnas que queremos seleccionar de la tabla.
+        columns_to_select = "pair, tier, dex, apy_24h, tvl, volume24h, fees24h"
         
-        # Verificamos que la petición fue exitosa (código 200).
-        if response.status_code == 200:
-            data = response.json()
-            if data:
-                # Convertimos la respuesta JSON a un DataFrame de Pandas.
-                df = pd.DataFrame(data)
-                return df
-            else:
-                st.warning("No se encontraron datos para la blockchain 'hyperevm'.")
-                return pd.DataFrame()
+        # Ejecutamos la consulta a Supabase.
+        response = supabase.table('Tabla2').select(columns_to_select).eq('blockchain', 'hyperevm').execute()
+        
+        # Verificamos si la respuesta contiene datos.
+        if response.data:
+            # Convertimos los datos a un DataFrame de Pandas para un manejo más fácil.
+            df = pd.DataFrame(response.data)
+            return df
         else:
-            # Si hay un error en la respuesta, lo mostramos.
-            st.error(f"Error al consultar la API de Supabase: {response.status_code} - {response.text}")
+            # Si no hay datos, devolvemos un DataFrame vacío.
+            st.warning("No se encontraron datos para la blockchain 'hyperevm'.")
             return pd.DataFrame()
             
-    except requests.exceptions.RequestException as e:
-        # Capturamos errores de conexión (ej. no hay internet).
-        st.error(f"Ocurrió un error de conexión: {e}")
+    except Exception as e:
+        # Capturamos cualquier error durante la consulta y lo mostramos.
+        st.error(f"Ocurrió un error al conectar o consultar Supabase: {e}")
         return pd.DataFrame()
 
 # --- Interfaz de la Aplicación ---
@@ -89,19 +77,28 @@ if not df.empty:
 
     # Filtramos el DataFrame principal para mostrar solo los pares seleccionados.
     if selected_pairs:
+        # Iteramos sobre cada par seleccionado por el usuario.
         for pair in selected_pairs:
+            # Creamos un sub-DataFrame para el par actual.
             pair_df = df[df['pair'] == pair].copy()
             
+            # Usamos st.expander para organizar la vista y no sobrecargar la pantalla.
             with st.expander(f"Comparativa para el par: **{pair}**", expanded=True):
+                
+                # Reiniciamos el índice para que no muestre el índice original del DataFrame.
                 pair_df.reset_index(drop=True, inplace=True)
+                
+                # Mostramos la tabla de datos para el par.
                 st.dataframe(pair_df, use_container_width=True)
     else:
         st.info("Por favor, selecciona al menos un par para ver la comparativa.")
 
 else:
+    # Mensaje que se muestra si no se pudieron cargar datos.
     st.info("No hay datos disponibles para mostrar.")
 
 # Botón para forzar la recarga de los datos, limpiando la caché.
 if st.button('Recargar Datos'):
     st.cache_data.clear()
     st.rerun()
+
