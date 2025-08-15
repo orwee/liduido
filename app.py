@@ -27,7 +27,8 @@ def load_data():
     filtrando por blockchain = 'hyperevm'.
     """
     # Columnas que queremos seleccionar de la tabla.
-    columns_to_select = "pair,tier,dex,apy_24h,tvl,volume24h,fees24h"
+    # CORRECCIÓN: Se eliminaron los guiones bajos de apy24h, volume24h y fees24h.
+    columns_to_select = "pair,tier,dex,apy24h,tvl,volume24h,fees24h"
     
     # Construimos la URL completa para la petición GET.
     # Añadimos los parámetros para seleccionar columnas y filtrar por blockchain.
