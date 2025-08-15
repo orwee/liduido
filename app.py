@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client
-import os
+import requests # Importamos la librería requests
 
 # --- Configuración de la página de Streamlit ---
 st.set_page_config(
@@ -11,94 +10,127 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- Conexión a Supabase ---
-# Intenta obtener las credenciales desde los secretos de Streamlit.
+# --- Credenciales de Supabase ---
+# Obtenemos las credenciales desde los secretos de Streamlit.
 try:
     supabase_url = st.secrets["SUPABASE_URL"]
     supabase_key = st.secrets["SUPABASE_KEY"]
-    supabase: Client = create_client(supabase_url, supabase_key)
 except KeyError:
-    # Si las credenciales no se encuentran en los secretos, muestra un error claro.
     st.error("Error: No se encontraron las credenciales de Supabase. Asegúrate de configurar tu archivo `secrets.toml`.")
-    st.stop() # Detiene la ejecución si no hay credenciales.
+    st.stop()
 
-# --- Función para cargar y procesar los datos ---
-@st.cache_data(ttl=600) # La caché expira cada 10 minutos (600 segundos)
+# --- Función para cargar y procesar los datos con Requests ---
+@st.cache_data(ttl=600) # La caché expira cada 10 minutos
 def load_data():
     """
-    Carga los datos desde la tabla 'Tabla2' en Supabase,
+    Carga los datos desde la API REST de Supabase usando requests,
     filtrando por blockchain = 'hyperevm'.
     """
+    # Columnas que queremos seleccionar de la tabla.
+    columns_to_select = "pair,tier,dex,apy24h,tvl,volume24h,fees24h"
+    
+    # Construimos la URL completa para la petición GET.
+    url = f"{supabase_url}/rest/v1/Tabla2?select={columns_to_select}&blockchain=eq.hyperevm"
+    
+    # Preparamos los headers para la autenticación.
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}"
+    }
+    
     try:
-        # Columnas que queremos seleccionar de la tabla.
-        columns_to_select = "pair, tier, dex, apy_24h, tvl, volume24h, fees24h"
+        # Realizamos la petición GET a la API.
+        response = requests.get(url, headers=headers)
         
-        # Ejecutamos la consulta a Supabase.
-        response = supabase.table('Tabla2').select(columns_to_select).eq('blockchain', 'hyperevm').execute()
-        
-        # Verificamos si la respuesta contiene datos.
-        if response.data:
-            # Convertimos los datos a un DataFrame de Pandas para un manejo más fácil.
-            df = pd.DataFrame(response.data)
-            return df
+        # Verificamos que la petición fue exitosa (código 200).
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                df = pd.DataFrame(data)
+                # Asegurarse que las columnas numéricas sean del tipo correcto
+                for col in ['apy24h', 'tvl', 'volume24h', 'fees24h', 'tier']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                return df
+            else:
+                st.warning("No se encontraron datos para la blockchain 'hyperevm'.")
+                return pd.DataFrame()
         else:
-            # Si no hay datos, devolvemos un DataFrame vacío.
-            st.warning("No se encontraron datos para la blockchain 'hyperevm'.")
+            # Si hay un error en la respuesta, lo mostramos.
+            st.error(f"Error al consultar la API de Supabase: {response.status_code} - {response.text}")
             return pd.DataFrame()
             
-    except Exception as e:
-        # Capturamos cualquier error durante la consulta y lo mostramos.
-        st.error(f"Ocurrió un error al conectar o consultar Supabase: {e}")
+    except requests.exceptions.RequestException as e:
+        # Capturamos errores de conexión (ej. no hay internet).
+        st.error(f"Ocurrió un error de conexión: {e}")
         return pd.DataFrame()
 
 # --- Interfaz de la Aplicación ---
-
-# Título principal de la aplicación.
 st.title("📊 Comparador de Pares en DEXs para HyperEVM")
 st.markdown("Esta aplicación busca datos en Supabase y compara los pares disponibles en diferentes DEXs.")
 
-# Cargamos los datos usando nuestra función cacheada.
 df = load_data()
 
-# Si el DataFrame no está vacío, procedemos a mostrar los datos.
 if not df.empty:
-    
-    # Obtenemos la lista de todos los pares únicos para el filtro.
     all_pairs = sorted(df['pair'].unique())
     
-    # Creamos un multiselector para que el usuario elija qué pares visualizar.
+    # Establecemos el par por defecto
+    default_selection = ['kHYPE/WHYPE'] if 'kHYPE/WHYPE' in all_pairs else []
+    
     selected_pairs = st.multiselect(
         "Selecciona los pares que quieres comparar:",
         options=all_pairs,
-        default=all_pairs
+        default=default_selection
     )
     
-    st.markdown("---") # Separador visual
+    st.markdown("---")
 
-    # Filtramos el DataFrame principal para mostrar solo los pares seleccionados.
     if selected_pairs:
-        # Iteramos sobre cada par seleccionado por el usuario.
         for pair in selected_pairs:
-            # Creamos un sub-DataFrame para el par actual.
-            pair_df = df[df['pair'] == pair].copy()
-            
-            # Usamos st.expander para organizar la vista y no sobrecargar la pantalla.
             with st.expander(f"Comparativa para el par: **{pair}**", expanded=True):
                 
-                # Reiniciamos el índice para que no muestre el índice original del DataFrame.
-                pair_df.reset_index(drop=True, inplace=True)
+                # --- Calculadora para 'gliquid_test' ---
+                st.subheader("Calculadora APY para 'gliquid_test'")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    # Usamos una clave única para cada input para evitar conflictos en Streamlit
+                    new_tier = st.number_input("Tier", value=1.0, step=0.01, format="%.2f", key=f"tier_{pair}")
+                with col2:
+                    new_tvl = st.number_input("TVL", value=100000, step=1000, key=f"tvl_{pair}")
+                with col3:
+                    new_volume = st.number_input("Volumen 24h", value=50000, step=1000, key=f"vol_{pair}")
+
+                # Calcular el nuevo APY
+                if new_tvl > 0:
+                    # Fórmula: (tier * volumen / tvl) * 365
+                    new_apy = (new_tier * new_volume / new_tvl) * 365
+                else:
+                    new_apy = 0
+
+                # Crear la nueva fila
+                new_row_data = {
+                    'pair': pair, 'tier': new_tier, 'dex': 'gliquid_test',
+                    'apy24h': new_apy, 'tvl': new_tvl, 'volume24h': new_volume,
+                    'fees24h': 0 # Asumimos 0 fees para el test
+                }
+                new_row_df = pd.DataFrame([new_row_data])
+
+                # --- Preparar y mostrar la tabla ---
+                pair_df = df[df['pair'] == pair].copy()
                 
-                # Mostramos la tabla de datos para el par.
-                st.dataframe(pair_df, use_container_width=True)
+                # Combinar la fila de la calculadora con los datos existentes
+                combined_df = pd.concat([new_row_df, pair_df])
+                
+                # Ordenar el DataFrame combinado por apy24h en orden descendente
+                sorted_df = combined_df.sort_values(by='apy24h', ascending=False)
+                
+                sorted_df.reset_index(drop=True, inplace=True)
+                
+                st.dataframe(sorted_df, use_container_width=True)
     else:
         st.info("Por favor, selecciona al menos un par para ver la comparativa.")
-
 else:
-    # Mensaje que se muestra si no se pudieron cargar datos.
     st.info("No hay datos disponibles para mostrar.")
 
-# Botón para forzar la recarga de los datos, limpiando la caché.
 if st.button('Recargar Datos'):
     st.cache_data.clear()
     st.rerun()
-
