@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client # Importamos el cliente de Supabase
+import requests # Importamos la librería requests
 
 # --- Configuración de la página de Streamlit ---
 st.set_page_config(
@@ -15,40 +15,53 @@ st.set_page_config(
 try:
     supabase_url = st.secrets["SUPABASE_URL"]
     supabase_key = st.secrets["SUPABASE_KEY"]
-    # Creamos el cliente de Supabase
-    supabase: Client = create_client(supabase_url, supabase_key)
 except KeyError:
     st.error("Error: No se encontraron las credenciales de Supabase. Asegúrate de configurar tu archivo `secrets.toml`.")
     st.stop()
 
-# --- Función para cargar y procesar los datos con el cliente de Supabase ---
+# --- Función para cargar y procesar los datos con Requests ---
 @st.cache_data(ttl=600) # La caché expira cada 10 minutos
 def load_data():
     """
-    Carga los datos desde la tabla 'Tabla2' en Supabase,
+    Carga los datos desde la API REST de Supabase usando requests,
     filtrando por blockchain = 'hyperevm'.
     """
+    # Columnas que queremos seleccionar de la tabla.
+    columns_to_select = "pair,tier,dex,apy24h,tvl,volume24h,fees24h"
+    
+    # Construimos la URL completa para la petición GET.
+    url = f"{supabase_url}/rest/v1/Tabla2?select={columns_to_select}&blockchain=eq.hyperevm"
+    
+    # Preparamos los headers para la autenticación.
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}"
+    }
+    
     try:
-        # Columnas que queremos seleccionar de la tabla.
-        columns_to_select = "pair,tier,dex,apy24h,tvl,volume24h,fees24h"
+        # Realizamos la petición GET a la API.
+        response = requests.get(url, headers=headers)
         
-        # Ejecutamos la consulta a Supabase usando el cliente.
-        response = supabase.table('Tabla2').select(columns_to_select).eq('blockchain', 'hyperevm').execute()
-        
-        # Verificamos si la respuesta contiene datos.
-        if response.data:
-            df = pd.DataFrame(response.data)
-            # Asegurarse que las columnas numéricas sean del tipo correcto
-            for col in ['apy24h', 'tvl', 'volume24h', 'fees24h', 'tier']:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            return df
+        # Verificamos que la petición fue exitosa (código 200).
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                df = pd.DataFrame(data)
+                # Asegurarse que las columnas numéricas sean del tipo correcto
+                for col in ['apy24h', 'tvl', 'volume24h', 'fees24h', 'tier']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                return df
+            else:
+                st.warning("No se encontraron datos para la blockchain 'hyperevm'.")
+                return pd.DataFrame()
         else:
-            st.warning("No se encontraron datos para la blockchain 'hyperevm'.")
+            # Si hay un error en la respuesta, lo mostramos.
+            st.error(f"Error al consultar la API de Supabase: {response.status_code} - {response.text}")
             return pd.DataFrame()
             
-    except Exception as e:
-        # Capturamos cualquier error durante la consulta y lo mostramos.
-        st.error(f"Ocurrió un error al conectar o consultar Supabase: {e}")
+    except requests.exceptions.RequestException as e:
+        # Capturamos errores de conexión (ej. no hay internet).
+        st.error(f"Ocurrió un error de conexión: {e}")
         return pd.DataFrame()
 
 # --- Interfaz de la Aplicación ---
