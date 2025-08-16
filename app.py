@@ -26,7 +26,8 @@ def load_data():
     Carga los datos desde la API REST de Supabase usando requests,
     filtrando por blockchain = 'hyperevm'.
     """
-    columns_to_select = "pair,tier,dex,apy24h,tvl,volume24h,fees24h"
+    # CORRECCIÓN: Se cambió volume24h por volume24h2 en la solicitud
+    columns_to_select = "pair,tier,dex,apy24h,tvl,volume24h2,fees24h"
     url = f"{supabase_url}/rest/v1/Tabla2?select={columns_to_select}&blockchain=eq.hyperevm"
     headers = {
         "apikey": supabase_key,
@@ -38,7 +39,8 @@ def load_data():
             data = response.json()
             if data:
                 df = pd.DataFrame(data)
-                for col in ['apy24h', 'tvl', 'volume24h', 'fees24h', 'tier']:
+                # CORRECCIÓN: Se procesa la nueva columna volume24h2
+                for col in ['apy24h', 'tvl', 'volume24h2', 'fees24h', 'tier']:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 return df
             else:
@@ -92,7 +94,8 @@ if not df.empty:
                     # Si existe 'gliquid', usamos sus datos como defecto
                     default_tier = float(gliquid_data.iloc[0]['tier'])
                     default_tvl = int(gliquid_data.iloc[0]['tvl'])
-                    default_volume = int(gliquid_data.iloc[0]['volume24h'])
+                    # CORRECCIÓN: Se usa volume24h2 para el valor por defecto
+                    default_volume = int(gliquid_data.iloc[0]['volume24h2'])
                 else:
                     # Si no, usamos valores genéricos
                     default_tier = 1.0
@@ -115,7 +118,9 @@ if not df.empty:
                 # Crear la nueva fila
                 new_row_data = {
                     'pair': pair, 'tier': new_tier, 'dex': 'gliquid_test',
-                    'apy24h': new_apy, 'tvl': new_tvl, 'volume24h': new_volume,
+                    'apy24h': new_apy, 'tvl': new_tvl, 
+                    # CORRECCIÓN: Se nombra la columna como volume24h2
+                    'volume24h2': new_volume, 
                     'fees24h': 0
                 }
                 new_row_df = pd.DataFrame([new_row_data])
