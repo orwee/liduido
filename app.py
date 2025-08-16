@@ -26,28 +26,18 @@ def load_data():
     Carga los datos desde la API REST de Supabase usando requests,
     filtrando por blockchain = 'hyperevm'.
     """
-    # Columnas que queremos seleccionar de la tabla.
     columns_to_select = "pair,tier,dex,apy24h,tvl,volume24h,fees24h"
-    
-    # Construimos la URL completa para la petición GET.
     url = f"{supabase_url}/rest/v1/Tabla2?select={columns_to_select}&blockchain=eq.hyperevm"
-    
-    # Preparamos los headers para la autenticación.
     headers = {
         "apikey": supabase_key,
         "Authorization": f"Bearer {supabase_key}"
     }
-    
     try:
-        # Realizamos la petición GET a la API.
         response = requests.get(url, headers=headers)
-        
-        # Verificamos que la petición fue exitosa (código 200).
         if response.status_code == 200:
             data = response.json()
             if data:
                 df = pd.DataFrame(data)
-                # Asegurarse que las columnas numéricas sean del tipo correcto
                 for col in ['apy24h', 'tvl', 'volume24h', 'fees24h', 'tier']:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 return df
@@ -55,14 +45,22 @@ def load_data():
                 st.warning("No se encontraron datos para la blockchain 'hyperevm'.")
                 return pd.DataFrame()
         else:
-            # Si hay un error en la respuesta, lo mostramos.
             st.error(f"Error al consultar la API de Supabase: {response.status_code} - {response.text}")
             return pd.DataFrame()
-            
     except requests.exceptions.RequestException as e:
-        # Capturamos errores de conexión (ej. no hay internet).
         st.error(f"Ocurrió un error de conexión: {e}")
         return pd.DataFrame()
+
+# --- Función para resaltar filas ---
+def highlight_dex(row):
+    """
+    Resalta las filas de 'gliquid' y 'gliquid_test'.
+    """
+    color = 'background-color: #2E4053' # Un color oscuro para resaltar
+    if row.dex in ['gliquid', 'gliquid_test']:
+        return [color] * len(row)
+    else:
+        return [''] * len(row)
 
 # --- Interfaz de la Aplicación ---
 st.title("📊 Comparador de Pares en DEXs para HyperEVM")
@@ -72,8 +70,6 @@ df = load_data()
 
 if not df.empty:
     all_pairs = sorted(df['pair'].unique())
-    
-    # Establecemos el par por defecto
     default_selection = ['kHYPE/WHYPE'] if 'kHYPE/WHYPE' in all_pairs else []
     
     selected_pairs = st.multiselect(
@@ -88,44 +84,48 @@ if not df.empty:
         for pair in selected_pairs:
             with st.expander(f"Comparativa para el par: **{pair}**", expanded=True):
                 
+                pair_df = df[df['pair'] == pair].copy()
+                
+                # --- Valores por defecto para la calculadora ---
+                gliquid_data = pair_df[pair_df['dex'] == 'gliquid']
+                if not gliquid_data.empty:
+                    # Si existe 'gliquid', usamos sus datos como defecto
+                    default_tier = float(gliquid_data.iloc[0]['tier'])
+                    default_tvl = int(gliquid_data.iloc[0]['tvl'])
+                    default_volume = int(gliquid_data.iloc[0]['volume24h'])
+                else:
+                    # Si no, usamos valores genéricos
+                    default_tier = 1.0
+                    default_tvl = 100000
+                    default_volume = 50000
+
                 # --- Calculadora para 'gliquid_test' ---
                 st.subheader("Calculadora APY para 'gliquid_test'")
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    # Usamos una clave única para cada input para evitar conflictos en Streamlit
-                    new_tier = st.number_input("Tier", value=1.0, step=0.01, format="%.2f", key=f"tier_{pair}")
+                    new_tier = st.number_input("Tier", value=default_tier, step=0.01, format="%.2f", key=f"tier_{pair}")
                 with col2:
-                    new_tvl = st.number_input("TVL", value=100000, step=1000, key=f"tvl_{pair}")
+                    new_tvl = st.number_input("TVL", value=default_tvl, step=1000, key=f"tvl_{pair}")
                 with col3:
-                    new_volume = st.number_input("Volumen 24h", value=50000, step=1000, key=f"vol_{pair}")
+                    new_volume = st.number_input("Volumen 24h", value=default_volume, step=1000, key=f"vol_{pair}")
 
                 # Calcular el nuevo APY
-                if new_tvl > 0:
-                    # Fórmula: (tier * volumen / tvl) * 365
-                    new_apy = (new_tier * new_volume / new_tvl) * 365
-                else:
-                    new_apy = 0
+                new_apy = (new_tier * new_volume / new_tvl) * 365 if new_tvl > 0 else 0
 
                 # Crear la nueva fila
                 new_row_data = {
                     'pair': pair, 'tier': new_tier, 'dex': 'gliquid_test',
                     'apy24h': new_apy, 'tvl': new_tvl, 'volume24h': new_volume,
-                    'fees24h': 0 # Asumimos 0 fees para el test
+                    'fees24h': 0
                 }
                 new_row_df = pd.DataFrame([new_row_data])
 
                 # --- Preparar y mostrar la tabla ---
-                pair_df = df[df['pair'] == pair].copy()
-                
-                # Combinar la fila de la calculadora con los datos existentes
                 combined_df = pd.concat([new_row_df, pair_df])
+                sorted_df = combined_df.sort_values(by='apy24h', ascending=False).reset_index(drop=True)
                 
-                # Ordenar el DataFrame combinado por apy24h en orden descendente
-                sorted_df = combined_df.sort_values(by='apy24h', ascending=False)
-                
-                sorted_df.reset_index(drop=True, inplace=True)
-                
-                st.dataframe(sorted_df, use_container_width=True)
+                # Aplicamos el estilo para resaltar las filas y mostramos el DataFrame
+                st.dataframe(sorted_df.style.apply(highlight_dex, axis=1), use_container_width=True)
     else:
         st.info("Por favor, selecciona al menos un par para ver la comparativa.")
 else:
