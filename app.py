@@ -26,7 +26,6 @@ def load_data():
     Carga los datos desde la API REST de Supabase usando requests,
     filtrando por blockchain = 'hyperevm'.
     """
-    # CORRECCIÓN: Se cambió volume24h por volume24h2 en la solicitud
     columns_to_select = "pair,tier,dex,apy24h,tvl,volume24h2,fees24h"
     url = f"{supabase_url}/rest/v1/Tabla2?select={columns_to_select}&blockchain=eq.hyperevm"
     headers = {
@@ -39,7 +38,6 @@ def load_data():
             data = response.json()
             if data:
                 df = pd.DataFrame(data)
-                # CORRECCIÓN: Se procesa la nueva columna volume24h2
                 for col in ['apy24h', 'tvl', 'volume24h2', 'fees24h', 'tier']:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 return df
@@ -91,13 +89,10 @@ if not df.empty:
                 # --- Valores por defecto para la calculadora ---
                 gliquid_data = pair_df[pair_df['dex'] == 'gliquid']
                 if not gliquid_data.empty:
-                    # Si existe 'gliquid', usamos sus datos como defecto
                     default_tier = float(gliquid_data.iloc[0]['tier'])
                     default_tvl = int(gliquid_data.iloc[0]['tvl'])
-                    # CORRECCIÓN: Se usa volume24h2 para el valor por defecto
                     default_volume = int(gliquid_data.iloc[0]['volume24h2'])
                 else:
-                    # Si no, usamos valores genéricos
                     default_tier = 1.0
                     default_tvl = 100000
                     default_volume = 50000
@@ -106,11 +101,14 @@ if not df.empty:
                 st.subheader("Calculadora APY para 'gliquid_test'")
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    new_tier = st.number_input("Tier", value=default_tier, step=0.01, format="%.2f", key=f"tier_{pair}")
+                    # CORRECCIÓN: Step de 0.05 para el tier
+                    new_tier = st.number_input("Tier", value=default_tier, step=0.05, format="%.2f", key=f"tier_{pair}")
                 with col2:
-                    new_tvl = st.number_input("TVL", value=default_tvl, step=1000, key=f"tvl_{pair}")
+                    # CORRECCIÓN: Step de 10000 para el TVL
+                    new_tvl = st.number_input("TVL", value=default_tvl, step=10000, key=f"tvl_{pair}")
                 with col3:
-                    new_volume = st.number_input("Volumen 24h", value=default_volume, step=1000, key=f"vol_{pair}")
+                    # CORRECCIÓN: Step de 10000 para el Volumen
+                    new_volume = st.number_input("Volumen 24h", value=default_volume, step=10000, key=f"vol_{pair}")
 
                 # Calcular el nuevo APY
                 new_apy = (new_tier * new_volume / new_tvl) * 365 if new_tvl > 0 else 0
@@ -119,7 +117,6 @@ if not df.empty:
                 new_row_data = {
                     'pair': pair, 'tier': new_tier, 'dex': 'gliquid_test',
                     'apy24h': new_apy, 'tvl': new_tvl, 
-                    # CORRECCIÓN: Se nombra la columna como volume24h2
                     'volume24h2': new_volume, 
                     'fees24h': 0
                 }
@@ -129,8 +126,17 @@ if not df.empty:
                 combined_df = pd.concat([new_row_df, pair_df])
                 sorted_df = combined_df.sort_values(by='apy24h', ascending=False).reset_index(drop=True)
                 
-                # Aplicamos el estilo para resaltar las filas y mostramos el DataFrame
-                st.dataframe(sorted_df.style.apply(highlight_dex, axis=1), use_container_width=True)
+                # CORRECCIÓN: Diccionario de formato para las columnas numéricas
+                formatter = {
+                    'tier': "{:.2f}",
+                    'apy24h': "{:,.2f}",
+                    'tvl': "{:,.2f}",
+                    'volume24h2': "{:,.2f}",
+                    'fees24h': "{:,.2f}"
+                }
+                
+                # Aplicamos el estilo para resaltar y formatear, y luego mostramos el DataFrame
+                st.dataframe(sorted_df.style.apply(highlight_dex, axis=1).format(formatter), use_container_width=True)
     else:
         st.info("Por favor, selecciona al menos un par para ver la comparativa.")
 else:
