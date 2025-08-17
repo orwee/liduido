@@ -60,6 +60,12 @@ def load_all_data(data_folder="data"):
     combined_df = pd.concat(all_data, ignore_index=True)
     combined_df.columns = [col.lower() for col in combined_df.columns]
 
+    # --- CORRECCIÓN: Asegurar que las columnas relevantes sean numéricas ---
+    numeric_cols = ['volume_24h', 'tvl', 'apy_24h', 'tier']
+    for col in numeric_cols:
+        if col in combined_df.columns:
+            combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce').fillna(0)
+
     if 'blockchain' in combined_df.columns:
         combined_df['blockchain'] = combined_df['blockchain'].str.lower()
         combined_df = combined_df[combined_df['blockchain'] == 'hyperevm']
@@ -87,8 +93,11 @@ def run_simulation(df, new_tier):
     gliquid_test_df = best_gliquid_indices.copy()
     gliquid_test_df['dex'] = 'gliquid_test'
     
-    # Recalcular el APY usando el nuevo tier, pero el TVL y volumen del mejor 'gliquid' de ese día
-    gliquid_test_df['apy_24h'] = (new_tier * gliquid_test_df['volume_24h'] / gliquid_test_df['tvl']) * 365 if not gliquid_test_df.empty and gliquid_test_df['tvl'].iloc[0] > 0 else 0
+    # --- CORRECCIÓN: Se usa .apply() para un cálculo seguro por fila ---
+    gliquid_test_df['apy_24h'] = gliquid_test_df.apply(
+        lambda row: (new_tier * row['volume_24h'] / row['tvl']) * 365 if row['tvl'] > 0 else 0,
+        axis=1
+    )
     gliquid_test_df['tier'] = new_tier
     
     return pd.concat([df, gliquid_test_df], ignore_index=True)
@@ -96,7 +105,6 @@ def run_simulation(df, new_tier):
 
 # --- Interfaz de Usuario ---
 
-# CORRECCIÓN: La calculadora ahora solo modifica el tier
 st.subheader("1. Simulación para 'gliquid_test'")
 simulated_tier = st.slider(
     "Selecciona el Fee Tier para la simulación:",
@@ -120,7 +128,6 @@ if not historical_df.empty:
         st.info(f"Columnas encontradas (en minúsculas): **{', '.join(historical_df.columns)}**")
         st.stop()
 
-    # Se pasa solo el tier a la simulación
     analysis_df = run_simulation(historical_df, simulated_tier)
     
     analysis_df['identifier'] = analysis_df['address'].astype(str) + " (" + analysis_df['dex'] + ")"
