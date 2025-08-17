@@ -3,6 +3,7 @@ import pandas as pd
 import requests # Importamos la librería requests
 
 # --- Configuración de la página de Streamlit ---
+# Por defecto, Streamlit usa un tema claro. No se necesita configuración adicional.
 st.set_page_config(
     page_title="Comparador de Pares DEX",
     page_icon="🔄",
@@ -56,7 +57,7 @@ def highlight_dex(row):
     """
     Resalta las filas de 'gliquid' y 'gliquid_test'.
     """
-    color = 'background-color: #2E4053' # Un color oscuro para resaltar
+    color = 'background-color: #D6EAF8' # Un color claro para resaltar
     if row.dex in ['gliquid', 'gliquid_test']:
         return [color] * len(row)
     else:
@@ -87,12 +88,17 @@ if not df.empty:
                 pair_df = df[df['pair'] == pair].copy()
                 
                 # --- Valores por defecto para la calculadora ---
-                gliquid_data = pair_df[pair_df['dex'] == 'gliquid']
+                # CORRECCIÓN: Busca la fila de 'gliquid' con el mayor apy24h
+                gliquid_data = pair_df[pair_df['dex'] == 'gliquid'].sort_values(by='apy24h', ascending=False)
+                
                 if not gliquid_data.empty:
-                    default_tier = float(gliquid_data.iloc[0]['tier'])
-                    default_tvl = int(gliquid_data.iloc[0]['tvl'])
-                    default_volume = int(gliquid_data.iloc[0]['volume24h2'])
+                    # Si existe 'gliquid', usamos los datos del de mayor APY como defecto
+                    best_gliquid = gliquid_data.iloc[0]
+                    default_tier = float(best_gliquid['tier'])
+                    default_tvl = int(best_gliquid['tvl'])
+                    default_volume = int(best_gliquid['volume24h2'])
                 else:
+                    # Si no, usamos valores genéricos
                     default_tier = 1.0
                     default_tvl = 100000
                     default_volume = 50000
@@ -101,24 +107,23 @@ if not df.empty:
                 st.subheader("Calculadora APY para 'gliquid_test'")
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    # CORRECCIÓN: Step de 0.05 para el tier
                     new_tier = st.number_input("Tier", value=default_tier, step=0.05, format="%.2f", key=f"tier_{pair}")
                 with col2:
-                    # CORRECCIÓN: Step de 10000 para el TVL
                     new_tvl = st.number_input("TVL", value=default_tvl, step=10000, key=f"tvl_{pair}")
                 with col3:
-                    # CORRECCIÓN: Step de 10000 para el Volumen
                     new_volume = st.number_input("Volumen 24h", value=default_volume, step=10000, key=f"vol_{pair}")
 
-                # Calcular el nuevo APY
+                # Calcular nuevos valores
                 new_apy = (new_tier * new_volume / new_tvl) * 365 if new_tvl > 0 else 0
+                # CORRECCIÓN: Calcular las fees para gliquid_test
+                new_fees = new_tier * new_volume
 
                 # Crear la nueva fila
                 new_row_data = {
                     'pair': pair, 'tier': new_tier, 'dex': 'gliquid_test',
                     'apy24h': new_apy, 'tvl': new_tvl, 
                     'volume24h2': new_volume, 
-                    'fees24h': 0
+                    'fees24h': new_fees
                 }
                 new_row_df = pd.DataFrame([new_row_data])
 
@@ -126,7 +131,6 @@ if not df.empty:
                 combined_df = pd.concat([new_row_df, pair_df])
                 sorted_df = combined_df.sort_values(by='apy24h', ascending=False).reset_index(drop=True)
                 
-                # CORRECCIÓN: Diccionario de formato para las columnas numéricas
                 formatter = {
                     'tier': "{:.2f}",
                     'apy24h': "{:,.2f}",
