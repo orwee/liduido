@@ -126,16 +126,17 @@ if not historical_df.empty:
                 if pair_group.empty:
                     continue
 
-                best_gliquid_for_pair = pair_group.loc[pair_group['apy_24h'].idxmax()]
-                constant_tvl = best_gliquid_for_pair['tvl']
-                constant_volume = best_gliquid_for_pair['volume_24h']
+                # --- CORRECCIÓN: Usar la fila con el TVL más alto como base para una simulación más estable ---
+                base_gliquid_for_pair = pair_group.loc[pair_group['tvl'].idxmax()]
+                constant_tvl = base_gliquid_for_pair['tvl']
+                constant_volume = base_gliquid_for_pair['volume_24h']
                 
                 unique_dates_for_pair = chart_df[chart_df['pair'].str.lower() == pair_name]['date'].unique()
                 
                 for date in unique_dates_for_pair:
                     new_apy = (simulated_tier * constant_volume / constant_tvl) * 365 if constant_tvl > 0 else 0
                     
-                    new_row = best_gliquid_for_pair.copy()
+                    new_row = base_gliquid_for_pair.copy()
                     new_row['date'] = date
                     new_row['dex'] = 'gliquid_test'
                     new_row['tier'] = simulated_tier
@@ -151,7 +152,8 @@ if not historical_df.empty:
         # 3. Preparar y mostrar el gráfico
         chart_df['identifier'] = chart_df['address'].astype(str) + " (" + chart_df['dex'] + ")"
         
-        if st.checkbox("Mostrar tabla de datos generados"):
+        # --- CORRECCIÓN: Mostrar la tabla por defecto para facilitar la verificación ---
+        if st.checkbox("Mostrar tabla de datos generados", value=True):
             st.dataframe(chart_df)
 
         fig = px.line(
