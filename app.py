@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os # Importamos os para manejar rutas de archivos
+import os
+from datetime import datetime
 
 # --- Configuración de la página ---
 st.set_page_config(
@@ -11,52 +12,63 @@ st.set_page_config(
 )
 
 st.title("📈 Análisis Histórico de APY (desde archivos locales)")
-st.markdown("Esta aplicación carga datos históricos desde una carpeta local `data` y visualiza la evolución del APY.")
+st.markdown("Esta aplicación carga datos históricos del 10 al 16 de agosto de 2021 desde una carpeta local `data`.")
 
 # --- Funciones de Carga y Procesamiento ---
 
-@st.cache_data(ttl=600) # Cache para no recargar en cada interacción
+@st.cache_data(ttl=600)
 def load_all_data(data_folder="data"):
     """
-    Carga todos los archivos CSV desde una carpeta local, los combina,
-    y devuelve el dataframe junto con la lista de archivos cargados.
+    Carga archivos CSV de un rango de fechas específico (10-08-21 a 16-08-21)
+    desde una carpeta local y los combina.
     """
     all_data = []
     
     if not os.path.isdir(data_folder):
-        st.error(f"Error: No se encontró la carpeta '{data_folder}'. Asegúrate de que exista en el mismo directorio que el script.")
+        st.error(f"Error: No se encontró la carpeta '{data_folder}'.")
         return pd.DataFrame(), []
 
-    # El script lee dinámicamente todos los archivos .csv que encuentre.
-    # Simplemente coloca los archivos del 10 al 16 de agosto en la carpeta 'data'.
     filenames = sorted([f for f in os.listdir(data_folder) if f.endswith('.csv')])
     
     if not filenames:
         st.warning(f"No se encontraron archivos .csv en la carpeta '{data_folder}'.")
         return pd.DataFrame(), []
 
+    # Definimos el rango de fechas que queremos cargar
+    start_date = datetime.strptime("10-08-21", "%d-%m-%y").date()
+    end_date = datetime.strptime("16-08-21", "%d-%m-%y").date()
+    loaded_files = []
+
     for filename in filenames:
-        file_path = os.path.join(data_folder, filename)
         try:
-            df = pd.read_csv(file_path)
             date_str = filename.replace('.csv', '')
-            df['date'] = pd.to_datetime(date_str, format='%d-%m-%y')
-            all_data.append(df)
+            file_date = datetime.strptime(date_str, "%d-%m-%y").date()
+            
+            # Comprobamos si la fecha del archivo está en nuestro rango
+            if start_date <= file_date <= end_date:
+                file_path = os.path.join(data_folder, filename)
+                df = pd.read_csv(file_path)
+                df['date'] = pd.to_datetime(date_str, format='%d-%m-%y')
+                all_data.append(df)
+                loaded_files.append(filename)
+        except ValueError:
+            # Ignoramos archivos que no tengan un formato de fecha válido
+            continue
         except Exception as e:
-            st.warning(f"No se pudo cargar o procesar el archivo: {filename}. Error: {e}")
+            st.warning(f"No se pudo procesar el archivo: {filename}. Error: {e}")
     
     if not all_data:
+        st.warning("No se encontraron archivos CSV en el rango de fechas especificado (10-ago-2021 a 16-ago-2021).")
         return pd.DataFrame(), []
         
     combined_df = pd.concat(all_data, ignore_index=True)
     combined_df.columns = [col.lower() for col in combined_df.columns]
     
-    return combined_df, filenames
+    return combined_df, loaded_files
 
 def run_simulation(df, new_tier):
     """
-    Crea una copia de los datos de 'gliquid', la renombra a 'gliquid_test'
-    y recalcula el APY con el nuevo tier.
+    Crea una copia de 'gliquid', la renombra a 'gliquid_test' y recalcula el APY.
     """
     df['dex'] = df['dex'].str.lower()
     
@@ -67,6 +79,10 @@ def run_simulation(df, new_tier):
 
     gliquid_test_df = gliquid_df.copy()
     gliquid_test_df['dex'] = 'gliquid_test'
+    
+    # --- CORRECCIÓN: Aseguramos que las columnas sean numéricas antes de calcular ---
+    gliquid_test_df['volume_24h'] = pd.to_numeric(gliquid_test_df['volume_24h'], errors='coerce').fillna(0)
+    gliquid_test_df['tvl'] = pd.to_numeric(gliquid_test_df['tvl'], errors='coerce').fillna(0)
     
     gliquid_test_df['apy_24h'] = gliquid_test_df.apply(
         lambda row: (new_tier * row['volume_24h'] / row['tvl']) * 365 if row['tvl'] > 0 else 0,
@@ -80,14 +96,13 @@ def run_simulation(df, new_tier):
 
 st.subheader("1. Simulación para 'gliquid_test'")
 simulated_tier = st.slider(
-    "Selecciona el Fee Tier para la simulación de 'gliquid_test':",
+    "Selecciona el Fee Tier para la simulación:",
     min_value=0.01, max_value=5.0, value=1.0, step=0.05, format="%.2f"
 )
 
 # --- Lógica Principal ---
 historical_df, loaded_files = load_all_data()
 
-# Mostramos los archivos que se han cargado para confirmación del usuario
 if loaded_files:
     with st.expander("Ver archivos cargados"):
         st.write(loaded_files)
@@ -97,8 +112,8 @@ if not historical_df.empty:
     missing_columns = [col for col in required_columns if col not in historical_df.columns]
     
     if missing_columns:
-        st.error(f"Error: Faltan las siguientes columnas en tus archivos CSV: **{', '.join(missing_columns)}**.")
-        st.info(f"Las columnas que se encontraron (y se convirtieron a minúsculas) son: **{', '.join(historical_df.columns)}**")
+        st.error(f"Error: Faltan columnas en tus CSVs: **{', '.join(missing_columns)}**.")
+        st.info(f"Columnas encontradas (en minúsculas): **{', '.join(historical_df.columns)}**")
         st.stop()
 
     analysis_df = run_simulation(historical_df, simulated_tier)
@@ -108,11 +123,10 @@ if not historical_df.empty:
     st.subheader("2. Análisis y Comparativa")
     
     all_pools = sorted(analysis_df['identifier'].unique())
-    
     default_selection = [p for p in all_pools if 'gliquid' in p]
     
     selected_pools = st.multiselect(
-        "Selecciona los pools a visualizar en el gráfico:",
+        "Selecciona los pools a visualizar:",
         options=all_pools,
         default=default_selection
     )
@@ -133,4 +147,3 @@ if not historical_df.empty:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Selecciona al menos un pool para generar el gráfico.")
-
