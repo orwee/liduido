@@ -35,8 +35,8 @@ def load_all_data(data_folder="data"):
         return pd.DataFrame(), []
 
     # Definimos el rango de fechas que queremos cargar
-    start_date = datetime.strptime("10-08-21", "%d-%m-%y").date()
-    end_date = datetime.strptime("16-08-21", "%d-%m-%y").date()
+    start_date = datetime.strptime("10-08-25", "%d-%m-%y").date()
+    end_date = datetime.strptime("16-08-25", "%d-%m-%y").date()
     loaded_files = []
 
     for filename in filenames:
