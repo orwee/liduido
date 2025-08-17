@@ -12,14 +12,14 @@ st.set_page_config(
 )
 
 st.title("📈 Análisis Histórico de APY para HyperEVM")
-st.markdown("Esta aplicación carga datos históricos (10-16 ago 2021), los filtra por la blockchain **hyperevm** y permite analizar el APY por par.")
+st.markdown("Esta aplicación carga datos históricos (10-16 ago 2025), los filtra por la blockchain **hyperevm** y permite analizar el APY por par.")
 
 # --- Funciones de Carga y Procesamiento ---
 
 @st.cache_data(ttl=600)
 def load_all_data(data_folder="data"):
     """
-    Carga archivos CSV de un rango de fechas, los combina y filtra por blockchain.
+    Carga archivos CSV de un rango de fechas (2025), los combina y filtra por blockchain.
     """
     all_data = []
     
@@ -33,6 +33,7 @@ def load_all_data(data_folder="data"):
         st.warning(f"No se encontraron archivos .csv en la carpeta '{data_folder}'.")
         return pd.DataFrame(), []
 
+    # CORRECCIÓN: Se actualizó el año a 2025
     start_date = datetime.strptime("10-08-25", "%d-%m-%y").date()
     end_date = datetime.strptime("16-08-25", "%d-%m-%y").date()
     loaded_files = []
@@ -54,13 +55,12 @@ def load_all_data(data_folder="data"):
             st.warning(f"No se pudo procesar el archivo: {filename}. Error: {e}")
     
     if not all_data:
-        st.warning("No se encontraron archivos CSV en el rango de fechas especificado (10-ago-2021 a 16-ago-2021).")
+        st.warning("No se encontraron archivos CSV en el rango de fechas especificado (10-ago-2025 a 16-ago-2025).")
         return pd.DataFrame(), []
         
     combined_df = pd.concat(all_data, ignore_index=True)
     combined_df.columns = [col.lower() for col in combined_df.columns]
 
-    # --- CORRECCIÓN: Filtrar por blockchain 'hyperevm' ---
     if 'blockchain' in combined_df.columns:
         combined_df['blockchain'] = combined_df['blockchain'].str.lower()
         combined_df = combined_df[combined_df['blockchain'] == 'hyperevm']
@@ -70,38 +70,41 @@ def load_all_data(data_folder="data"):
     
     return combined_df, loaded_files
 
-def run_simulation(df, new_tier):
+def run_simulation(df, new_tier, new_tvl, new_volume):
     """
-    Crea una copia de 'gliquid', la renombra a 'gliquid_test' y recalcula el APY.
+    Crea una copia de 'gliquid', la renombra a 'gliquid_test' y recalcula el APY con los nuevos parámetros.
     """
     df['dex'] = df['dex'].str.lower()
     
     gliquid_df = df[df['dex'] == 'gliquid'].copy()
     if gliquid_df.empty:
-        st.info("No se encontraron datos para el DEX 'gliquid' en los datos filtrados para realizar la simulación.")
+        st.info("No se encontraron datos para el DEX 'gliquid' para realizar la simulación.")
         return df
 
     gliquid_test_df = gliquid_df.copy()
     gliquid_test_df['dex'] = 'gliquid_test'
     
-    gliquid_test_df['volume_24h'] = pd.to_numeric(gliquid_test_df['volume_24h'], errors='coerce').fillna(0)
-    gliquid_test_df['tvl'] = pd.to_numeric(gliquid_test_df['tvl'], errors='coerce').fillna(0)
-    
-    gliquid_test_df['apy_24h'] = gliquid_test_df.apply(
-        lambda row: (new_tier * row['volume_24h'] / row['tvl']) * 365 if row['tvl'] > 0 else 0,
-        axis=1
-    )
+    # CORRECCIÓN: Se usan los valores de la calculadora para recalcular el APY
+    gliquid_test_df['apy_24h'] = (new_tier * new_volume / new_tvl) * 365 if new_tvl > 0 else 0
+    gliquid_test_df['tier'] = new_tier
+    gliquid_test_df['tvl'] = new_tvl
+    gliquid_test_df['volume_24h'] = new_volume
     
     return pd.concat([df, gliquid_test_df], ignore_index=True)
 
 
 # --- Interfaz de Usuario ---
 
-st.subheader("1. Simulación para 'gliquid_test'")
-simulated_tier = st.slider(
-    "Selecciona el Fee Tier para la simulación:",
-    min_value=0.01, max_value=5.0, value=1.0, step=0.05, format="%.2f"
-)
+# CORRECCIÓN: Se reintroduce la calculadora global
+st.subheader("1. Calculadora y Simulación para 'gliquid_test'")
+col1, col2, col3 = st.columns(3)
+with col1:
+    simulated_tier = st.number_input("Tier", value=1.0, step=0.05, format="%.2f")
+with col2:
+    simulated_tvl = st.number_input("TVL", value=100000, step=10000)
+with col3:
+    simulated_volume = st.number_input("Volumen 24h", value=50000, step=10000)
+
 
 # --- Lógica Principal ---
 historical_df, loaded_files = load_all_data()
@@ -119,13 +122,13 @@ if not historical_df.empty:
         st.info(f"Columnas encontradas (en minúsculas): **{', '.join(historical_df.columns)}**")
         st.stop()
 
-    analysis_df = run_simulation(historical_df, simulated_tier)
+    # Se pasan los valores de la calculadora a la simulación
+    analysis_df = run_simulation(historical_df, simulated_tier, simulated_tvl, simulated_volume)
     
     analysis_df['identifier'] = analysis_df['address'].astype(str) + " (" + analysis_df['dex'] + ")"
     
     st.subheader("2. Análisis y Comparativa")
     
-    # --- CORRECCIÓN: El selector ahora usa la variable 'pair' ---
     all_pairs = sorted(analysis_df['pair'].str.lower().unique())
     default_selection = ['khype/whype'] if 'khype/whype' in all_pairs else []
     
@@ -136,14 +139,13 @@ if not historical_df.empty:
     )
 
     if selected_pairs:
-        # Filtramos el dataframe por los pares seleccionados
         chart_df = analysis_df[analysis_df['pair'].str.lower().isin(selected_pairs)]
 
         fig = px.line(
             chart_df,
             x='date',
             y='apy_24h',
-            color='identifier', # Mantenemos el identificador para distinguir cada pool
+            color='identifier',
             title="Evolución Histórica del APY por Par",
             labels={'date': 'Fecha', 'apy_24h': 'APY (%)', 'identifier': 'Address (DEX)'},
             markers=True
