@@ -18,18 +18,22 @@ st.markdown("Esta aplicación carga datos históricos desde una carpeta local `d
 @st.cache_data(ttl=600) # Cache para no recargar en cada interacción
 def load_all_data(data_folder="data"):
     """
-    Carga todos los archivos CSV desde una carpeta local y los combina.
+    Carga todos los archivos CSV desde una carpeta local, los combina,
+    y devuelve el dataframe junto con la lista de archivos cargados.
     """
     all_data = []
     
     if not os.path.isdir(data_folder):
         st.error(f"Error: No se encontró la carpeta '{data_folder}'. Asegúrate de que exista en el mismo directorio que el script.")
-        return pd.DataFrame()
+        return pd.DataFrame(), []
 
-    filenames = [f for f in os.listdir(data_folder) if f.endswith('.csv')]
+    # El script lee dinámicamente todos los archivos .csv que encuentre.
+    # Simplemente coloca los archivos del 10 al 16 de agosto en la carpeta 'data'.
+    filenames = sorted([f for f in os.listdir(data_folder) if f.endswith('.csv')])
+    
     if not filenames:
         st.warning(f"No se encontraron archivos .csv en la carpeta '{data_folder}'.")
-        return pd.DataFrame()
+        return pd.DataFrame(), []
 
     for filename in filenames:
         file_path = os.path.join(data_folder, filename)
@@ -42,21 +46,18 @@ def load_all_data(data_folder="data"):
             st.warning(f"No se pudo cargar o procesar el archivo: {filename}. Error: {e}")
     
     if not all_data:
-        return pd.DataFrame()
+        return pd.DataFrame(), []
         
     combined_df = pd.concat(all_data, ignore_index=True)
-    
-    # --- CORRECCIÓN: Convertir todos los nombres de columna a minúsculas ---
     combined_df.columns = [col.lower() for col in combined_df.columns]
     
-    return combined_df
+    return combined_df, filenames
 
 def run_simulation(df, new_tier):
     """
     Crea una copia de los datos de 'gliquid', la renombra a 'gliquid_test'
     y recalcula el APY con el nuevo tier.
     """
-    # --- CORRECCIÓN: Convertir la columna 'dex' a minúsculas para una búsqueda consistente ---
     df['dex'] = df['dex'].str.lower()
     
     gliquid_df = df[df['dex'] == 'gliquid'].copy()
@@ -67,7 +68,6 @@ def run_simulation(df, new_tier):
     gliquid_test_df = gliquid_df.copy()
     gliquid_test_df['dex'] = 'gliquid_test'
     
-    # --- CORRECCIÓN: Usar nombres de columna en minúsculas para el cálculo ---
     gliquid_test_df['apy_24h'] = gliquid_test_df.apply(
         lambda row: (new_tier * row['volume_24h'] / row['tvl']) * 365 if row['tvl'] > 0 else 0,
         axis=1
@@ -85,11 +85,14 @@ simulated_tier = st.slider(
 )
 
 # --- Lógica Principal ---
-historical_df = load_all_data()
+historical_df, loaded_files = load_all_data()
+
+# Mostramos los archivos que se han cargado para confirmación del usuario
+if loaded_files:
+    with st.expander("Ver archivos cargados"):
+        st.write(loaded_files)
 
 if not historical_df.empty:
-    # --- Verificación de Columnas ---
-    # --- CORRECCIÓN: Verificar columnas en minúsculas ---
     required_columns = ['address', 'dex', 'volume_24h', 'tvl', 'apy_24h']
     missing_columns = [col for col in required_columns if col not in historical_df.columns]
     
@@ -98,17 +101,14 @@ if not historical_df.empty:
         st.info(f"Las columnas que se encontraron (y se convirtieron a minúsculas) son: **{', '.join(historical_df.columns)}**")
         st.stop()
 
-    # --- Continuación de la Lógica ---
     analysis_df = run_simulation(historical_df, simulated_tier)
     
-    # --- CORRECCIÓN: Usar nombres de columna en minúsculas ---
     analysis_df['identifier'] = analysis_df['address'].astype(str) + " (" + analysis_df['dex'] + ")"
     
     st.subheader("2. Análisis y Comparativa")
     
     all_pools = sorted(analysis_df['identifier'].unique())
     
-    # --- CORRECCIÓN: El filtro por defecto ahora es insensible a mayúsculas ---
     default_selection = [p for p in all_pools if 'gliquid' in p]
     
     selected_pools = st.multiselect(
@@ -123,7 +123,7 @@ if not historical_df.empty:
         fig = px.line(
             chart_df,
             x='date',
-            y='apy_24h', # --- CORRECCIÓN: Usar nombre de columna en minúsculas ---
+            y='apy_24h',
             color='identifier',
             title="Evolución Histórica del APY",
             labels={'date': 'Fecha', 'apy_24h': 'APY (%)', 'identifier': 'Address (DEX)'},
@@ -133,5 +133,4 @@ if not historical_df.empty:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Selecciona al menos un pool para generar el gráfico.")
-
 
