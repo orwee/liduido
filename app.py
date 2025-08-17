@@ -60,7 +60,6 @@ def load_all_data(data_folder="data"):
     combined_df = pd.concat(all_data, ignore_index=True)
     combined_df.columns = [col.lower() for col in combined_df.columns]
 
-    # --- CORRECCIÓN: Asegurar que las columnas relevantes sean numéricas ---
     numeric_cols = ['volume_24h', 'tvl', 'apy_24h', 'tier']
     for col in numeric_cols:
         if col in combined_df.columns:
@@ -77,8 +76,8 @@ def load_all_data(data_folder="data"):
 
 def run_simulation(df, new_tier):
     """
-    Para cada día, encuentra el 'gliquid' con mayor APY, crea una copia 'gliquid_test'
-    y recalcula el APY solo con el nuevo tier.
+    Encuentra el 'gliquid' con el APY más alto en general y usa su TVL y volumen
+    como base constante para la simulación de 'gliquid_test' en todos los días.
     """
     df['dex'] = df['dex'].str.lower()
     
@@ -87,18 +86,35 @@ def run_simulation(df, new_tier):
         st.info("No se encontraron datos para el DEX 'gliquid' para realizar la simulación.")
         return df
 
-    # Encontrar el índice del 'gliquid' con el APY más alto para cada día
-    best_gliquid_indices = gliquid_df.loc[gliquid_df.groupby('date')['apy_24h'].idxmax()]
+    # --- CORRECCIÓN: Encontrar la mejor instancia de 'gliquid' en todo el período ---
+    best_gliquid_overall = gliquid_df.loc[gliquid_df['apy_24h'].idxmax()]
     
-    gliquid_test_df = best_gliquid_indices.copy()
-    gliquid_test_df['dex'] = 'gliquid_test'
+    # Usar su TVL y Volumen como constantes
+    constant_tvl = best_gliquid_overall['tvl']
+    constant_volume = best_gliquid_overall['volume_24h']
     
-    # --- CORRECCIÓN: Se usa .apply() para un cálculo seguro por fila ---
-    gliquid_test_df['apy_24h'] = gliquid_test_df.apply(
-        lambda row: (new_tier * row['volume_24h'] / row['tvl']) * 365 if row['tvl'] > 0 else 0,
-        axis=1
-    )
-    gliquid_test_df['tier'] = new_tier
+    # Obtener todas las fechas únicas para crear la serie temporal de la simulación
+    unique_dates = df['date'].unique()
+    
+    simulation_rows = []
+    for date in unique_dates:
+        # Calcular el APY simulado
+        new_apy = (new_tier * constant_volume / constant_tvl) * 365 if constant_tvl > 0 else 0
+        
+        # Crear una nueva fila para cada día
+        new_row = best_gliquid_overall.copy()
+        new_row['date'] = date
+        new_row['dex'] = 'gliquid_test'
+        new_row['tier'] = new_tier
+        new_row['tvl'] = constant_tvl
+        new_row['volume_24h'] = constant_volume
+        new_row['apy_24h'] = new_apy
+        simulation_rows.append(new_row)
+
+    if not simulation_rows:
+        return df
+
+    gliquid_test_df = pd.DataFrame(simulation_rows)
     
     return pd.concat([df, gliquid_test_df], ignore_index=True)
 
