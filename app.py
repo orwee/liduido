@@ -1,148 +1,141 @@
 import streamlit as st
 import pandas as pd
-import requests # Importamos la librería requests
+import plotly.express as px
 
-# --- Configuración de la página de Streamlit ---
-# Por defecto, Streamlit usa un tema claro. No se necesita configuración adicional.
+# --- Configuración de la página ---
 st.set_page_config(
-    page_title="Comparador de Pares DEX",
-    page_icon="🔄",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    page_title="Análisis Histórico de APY",
+    page_icon="📈",
+    layout="wide"
 )
 
-# --- Credenciales de Supabase ---
-# Obtenemos las credenciales desde los secretos de Streamlit.
-try:
-    supabase_url = st.secrets["SUPABASE_URL"]
-    supabase_key = st.secrets["SUPABASE_KEY"]
-except KeyError:
-    st.error("Error: No se encontraron las credenciales de Supabase. Asegúrate de configurar tu archivo `secrets.toml`.")
-    st.stop()
+st.title("📈 Análisis Histórico de APY desde GitHub")
+st.markdown("Esta aplicación carga datos históricos desde un repositorio de GitHub y visualiza la evolución del APY de diferentes pools.")
 
-# --- Función para cargar y procesar los datos con Requests ---
-@st.cache_data(ttl=600) # La caché expira cada 10 minutos
-def load_data():
+# --- Funciones de Carga y Procesamiento ---
+
+@st.cache_data(ttl=600) # Cache para no recargar en cada interacción
+def load_all_data(github_repo_url, filenames):
     """
-    Carga los datos desde la API REST de Supabase usando requests,
-    filtrando por blockchain = 'hyperevm'.
+    Carga múltiples archivos CSV desde un repositorio de GitHub y los combina.
     """
-    columns_to_select = "pair,tier,dex,apy24h,tvl,volume24h2,fees24h"
-    url = f"{supabase_url}/rest/v1/Tabla2?select={columns_to_select}&blockchain=eq.hyperevm"
-    headers = {
-        "apikey": supabase_key,
-        "Authorization": f"Bearer {supabase_key}"
-    }
-    try:
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            if data:
-                df = pd.DataFrame(data)
-                for col in ['apy24h', 'tvl', 'volume24h2', 'fees24h', 'tier']:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-                return df
-            else:
-                st.warning("No se encontraron datos para la blockchain 'hyperevm'.")
-                return pd.DataFrame()
-        else:
-            st.error(f"Error al consultar la API de Supabase: {response.status_code} - {response.text}")
-            return pd.DataFrame()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Ocurrió un error de conexión: {e}")
-        return pd.DataFrame()
+    all_data = []
+    base_url = github_repo_url.replace("github.com", "raw.githubusercontent.com") + "/main/data/"
 
-# --- Función para resaltar filas ---
-def highlight_dex(row):
-    """
-    Resalta las filas de 'gliquid' y 'gliquid_test'.
-    """
-    # CORRECCIÓN: Se cambió el color a un azul oscuro y el texto a blanco.
-    style = 'background-color: #2E4053; color: white;' 
-    if row.dex in ['gliquid', 'gliquid_test']:
-        return [style] * len(row)
-    else:
-        return [''] * len(row)
-
-# --- Interfaz de la Aplicación ---
-st.title("📊 Comparador de Pares en DEXs para HyperEVM")
-st.markdown("Esta aplicación busca datos en Supabase y compara los pares disponibles en diferentes DEXs.")
-
-df = load_data()
-
-if not df.empty:
-    all_pairs = sorted(df['pair'].unique())
-    default_selection = ['kHYPE/WHYPE'] if 'kHYPE/WHYPE' in all_pairs else []
+    for filename in filenames:
+        file_url = base_url + filename
+        try:
+            # Leemos el CSV y extraemos la fecha del nombre del archivo
+            df = pd.read_csv(file_url)
+            date_str = filename.replace('.csv', '')
+            # Convertimos la fecha a un formato estándar (YYYY-MM-DD)
+            df['date'] = pd.to_datetime(date_str, format='%d-%m-%y')
+            all_data.append(df)
+        except Exception as e:
+            st.warning(f"No se pudo cargar el archivo: {filename}. Error: {e}")
     
-    selected_pairs = st.multiselect(
-        "Selecciona los pares que quieres comparar:",
-        options=all_pairs,
-        default=default_selection
+    if not all_data:
+        return pd.DataFrame()
+        
+    # Combinamos todos los dataframes en uno solo
+    combined_df = pd.concat(all_data, ignore_index=True)
+    return combined_df
+
+def run_simulation(df, new_tier):
+    """
+    Crea una copia de los datos de 'gliquid', la renombra a 'gliquid_test'
+    y recalcula el APY con el nuevo tier.
+    """
+    if df.empty or 'dex' not in df.columns:
+        return df
+
+    # Filtramos solo los datos históricos de gliquid
+    gliquid_df = df[df['dex'] == 'gliquid'].copy()
+    if gliquid_df.empty:
+        st.info("No se encontraron datos para el DEX 'gliquid' para realizar la simulación.")
+        return df
+
+    # Creamos la versión de test
+    gliquid_test_df = gliquid_df.copy()
+    gliquid_test_df['dex'] = 'gliquid_test'
+    
+    # Recalculamos el APY con la nueva tier
+    # Aseguramos que no haya división por cero
+    gliquid_test_df['apy24h'] = gliquid_test_df.apply(
+        lambda row: (new_tier * row['volume24h2'] / row['tvl']) * 365 if row['tvl'] > 0 else 0,
+        axis=1
     )
     
-    st.markdown("---")
+    # Combinamos los datos originales con la simulación
+    return pd.concat([df, gliquid_test_df], ignore_index=True)
 
-    if selected_pairs:
-        for pair in selected_pairs:
-            with st.expander(f"Comparativa para el par: **{pair}**", expanded=True):
-                
-                pair_df = df[df['pair'] == pair].copy()
-                
-                # --- Valores por defecto para la calculadora ---
-                gliquid_data = pair_df[pair_df['dex'] == 'gliquid'].sort_values(by='apy24h', ascending=False)
-                
-                if not gliquid_data.empty:
-                    best_gliquid = gliquid_data.iloc[0]
-                    default_tier = float(best_gliquid['tier'])
-                    default_tvl = int(best_gliquid['tvl'])
-                    default_volume = int(best_gliquid['volume24h2'])
-                else:
-                    default_tier = 1.0
-                    default_tvl = 100000
-                    default_volume = 50000
 
-                # --- Calculadora para 'gliquid_test' ---
-                st.subheader("Calculadora APY para 'gliquid_test'")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    new_tier = st.number_input("Tier", value=default_tier, step=0.05, format="%.2f", key=f"tier_{pair}")
-                with col2:
-                    new_tvl = st.number_input("TVL", value=default_tvl, step=10000, key=f"tvl_{pair}")
-                with col3:
-                    new_volume = st.number_input("Volumen 24h", value=default_volume, step=10000, key=f"vol_{pair}")
+# --- Interfaz de Usuario ---
 
-                # Calcular nuevos valores
-                new_apy = (new_tier * new_volume / new_tvl) * 365 if new_tvl > 0 else 0
-                new_fees = new_tier * new_volume
+# 1. Input para el repositorio de GitHub
+st.subheader("1. Configuración del Repositorio")
+repo_url = st.text_input(
+    "URL del Repositorio de GitHub:",
+    "https://github.com/tu_usuario/tu_repositorio"
+)
 
-                # Crear la nueva fila
-                new_row_data = {
-                    'pair': pair, 'tier': new_tier, 'dex': 'gliquid_test',
-                    'apy24h': new_apy, 'tvl': new_tvl, 
-                    'volume24h2': new_volume, 
-                    'fees24h': new_fees
-                }
-                new_row_df = pd.DataFrame([new_row_data])
+# Lista de archivos a cargar. Puedes modificarla si añades más.
+files_to_load = [
+    "31-07-25.csv", "01-08-25.csv", "02-08-25.csv", "03-08-25.csv",
+    "04-08-25.csv", "05-08-25.csv", "06-08-25.csv"
+]
 
-                # --- Preparar y mostrar la tabla ---
-                combined_df = pd.concat([new_row_df, pair_df])
-                sorted_df = combined_df.sort_values(by='apy24h', ascending=False).reset_index(drop=True)
-                
-                formatter = {
-                    'tier': "{:.2f}",
-                    'apy24h': "{:,.2f}",
-                    'tvl': "{:,.2f}",
-                    'volume24h2': "{:,.2f}",
-                    'fees24h': "{:,.2f}"
-                }
-                
-                # Aplicamos el estilo para resaltar y formatear, y luego mostramos el DataFrame
-                st.dataframe(sorted_df.style.apply(highlight_dex, axis=1).format(formatter), use_container_width=True)
-    else:
-        st.info("Por favor, selecciona al menos un par para ver la comparativa.")
+# 2. Slider para la simulación
+st.subheader("2. Simulación para 'gliquid_test'")
+simulated_tier = st.slider(
+    "Selecciona el Fee Tier para la simulación de 'gliquid_test':",
+    min_value=0.01, max_value=5.0, value=1.0, step=0.05, format="%.2f"
+)
+
+# --- Lógica Principal ---
+if repo_url and repo_url != "https://github.com/tu_usuario/tu_repositorio":
+    # Cargamos los datos
+    historical_df = load_all_data(repo_url, files_to_load)
+
+    if not historical_df.empty:
+        # Ejecutamos la simulación
+        analysis_df = run_simulation(historical_df, simulated_tier)
+        
+        # Creamos un identificador único para cada línea del gráfico
+        analysis_df['identifier'] = analysis_df['pair'] + " (" + analysis_df['dex'] + ")"
+        
+        st.subheader("3. Análisis y Comparativa")
+        
+        # 3. Filtro para seleccionar qué pools mostrar
+        all_pools = sorted(analysis_df['identifier'].unique())
+        
+        # Por defecto seleccionamos gliquid y gliquid_test si existen
+        default_selection = [p for p in all_pools if 'gliquid' in p]
+        
+        selected_pools = st.multiselect(
+            "Selecciona los pools a visualizar en el gráfico:",
+            options=all_pools,
+            default=default_selection
+        )
+
+        if selected_pools:
+            # Filtramos el dataframe final para el gráfico
+            chart_df = analysis_df[analysis_df['identifier'].isin(selected_pools)]
+
+            # 4. Gráfico
+            fig = px.line(
+                chart_df,
+                x='date',
+                y='apy24h',
+                color='identifier',
+                title="Evolución Histórica del APY",
+                labels={'date': 'Fecha', 'apy24h': 'APY (%)', 'identifier': 'Pool'},
+                markers=True
+            )
+            fig.update_layout(legend_title_text='Pools')
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Selecciona al menos un pool para generar el gráfico.")
 else:
-    st.info("No hay datos disponibles para mostrar.")
+    st.info("Por favor, introduce la URL de tu repositorio de GitHub para cargar los datos.")
 
-if st.button('Recargar Datos'):
-    st.cache_data.clear()
-    st.rerun()
