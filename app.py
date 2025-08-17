@@ -11,16 +11,15 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📈 Análisis Histórico de APY (desde archivos locales)")
-st.markdown("Esta aplicación carga datos históricos del 10 al 16 de agosto de 2021 desde una carpeta local `data`.")
+st.title("📈 Análisis Histórico de APY para HyperEVM")
+st.markdown("Esta aplicación carga datos históricos (10-16 ago 2021), los filtra por la blockchain **hyperevm** y permite analizar el APY por par.")
 
 # --- Funciones de Carga y Procesamiento ---
 
 @st.cache_data(ttl=600)
 def load_all_data(data_folder="data"):
     """
-    Carga archivos CSV de un rango de fechas específico (10-08-21 a 16-08-21)
-    desde una carpeta local y los combina.
+    Carga archivos CSV de un rango de fechas, los combina y filtra por blockchain.
     """
     all_data = []
     
@@ -34,7 +33,6 @@ def load_all_data(data_folder="data"):
         st.warning(f"No se encontraron archivos .csv en la carpeta '{data_folder}'.")
         return pd.DataFrame(), []
 
-    # Definimos el rango de fechas que queremos cargar
     start_date = datetime.strptime("10-08-25", "%d-%m-%y").date()
     end_date = datetime.strptime("16-08-25", "%d-%m-%y").date()
     loaded_files = []
@@ -44,7 +42,6 @@ def load_all_data(data_folder="data"):
             date_str = filename.replace('.csv', '')
             file_date = datetime.strptime(date_str, "%d-%m-%y").date()
             
-            # Comprobamos si la fecha del archivo está en nuestro rango
             if start_date <= file_date <= end_date:
                 file_path = os.path.join(data_folder, filename)
                 df = pd.read_csv(file_path)
@@ -52,7 +49,6 @@ def load_all_data(data_folder="data"):
                 all_data.append(df)
                 loaded_files.append(filename)
         except ValueError:
-            # Ignoramos archivos que no tengan un formato de fecha válido
             continue
         except Exception as e:
             st.warning(f"No se pudo procesar el archivo: {filename}. Error: {e}")
@@ -63,6 +59,14 @@ def load_all_data(data_folder="data"):
         
     combined_df = pd.concat(all_data, ignore_index=True)
     combined_df.columns = [col.lower() for col in combined_df.columns]
+
+    # --- CORRECCIÓN: Filtrar por blockchain 'hyperevm' ---
+    if 'blockchain' in combined_df.columns:
+        combined_df['blockchain'] = combined_df['blockchain'].str.lower()
+        combined_df = combined_df[combined_df['blockchain'] == 'hyperevm']
+    else:
+        st.error("Error: La columna 'blockchain' no se encontró en los archivos CSV.")
+        return pd.DataFrame(), loaded_files
     
     return combined_df, loaded_files
 
@@ -74,13 +78,12 @@ def run_simulation(df, new_tier):
     
     gliquid_df = df[df['dex'] == 'gliquid'].copy()
     if gliquid_df.empty:
-        st.info("No se encontraron datos para el DEX 'gliquid' para realizar la simulación.")
+        st.info("No se encontraron datos para el DEX 'gliquid' en los datos filtrados para realizar la simulación.")
         return df
 
     gliquid_test_df = gliquid_df.copy()
     gliquid_test_df['dex'] = 'gliquid_test'
     
-    # --- CORRECCIÓN: Aseguramos que las columnas sean numéricas antes de calcular ---
     gliquid_test_df['volume_24h'] = pd.to_numeric(gliquid_test_df['volume_24h'], errors='coerce').fillna(0)
     gliquid_test_df['tvl'] = pd.to_numeric(gliquid_test_df['tvl'], errors='coerce').fillna(0)
     
@@ -108,7 +111,7 @@ if loaded_files:
         st.write(loaded_files)
 
 if not historical_df.empty:
-    required_columns = ['address', 'dex', 'volume_24h', 'tvl', 'apy_24h']
+    required_columns = ['address', 'dex', 'volume_24h', 'tvl', 'apy_24h', 'pair']
     missing_columns = [col for col in required_columns if col not in historical_df.columns]
     
     if missing_columns:
@@ -122,28 +125,30 @@ if not historical_df.empty:
     
     st.subheader("2. Análisis y Comparativa")
     
-    all_pools = sorted(analysis_df['identifier'].unique())
-    default_selection = [p for p in all_pools if 'gliquid' in p]
+    # --- CORRECCIÓN: El selector ahora usa la variable 'pair' ---
+    all_pairs = sorted(analysis_df['pair'].str.lower().unique())
+    default_selection = ['khype/whype'] if 'khype/whype' in all_pairs else []
     
-    selected_pools = st.multiselect(
-        "Selecciona los pools a visualizar:",
-        options=all_pools,
+    selected_pairs = st.multiselect(
+        "Selecciona los Pairs a visualizar:",
+        options=all_pairs,
         default=default_selection
     )
 
-    if selected_pools:
-        chart_df = analysis_df[analysis_df['identifier'].isin(selected_pools)]
+    if selected_pairs:
+        # Filtramos el dataframe por los pares seleccionados
+        chart_df = analysis_df[analysis_df['pair'].str.lower().isin(selected_pairs)]
 
         fig = px.line(
             chart_df,
             x='date',
             y='apy_24h',
-            color='identifier',
-            title="Evolución Histórica del APY",
+            color='identifier', # Mantenemos el identificador para distinguir cada pool
+            title="Evolución Histórica del APY por Par",
             labels={'date': 'Fecha', 'apy_24h': 'APY (%)', 'identifier': 'Address (DEX)'},
             markers=True
         )
         fig.update_layout(legend_title_text='Pools')
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Selecciona al menos un pool para generar el gráfico.")
+        st.info("Selecciona al menos un par para generar el gráfico.")
