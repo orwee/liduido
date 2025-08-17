@@ -22,12 +22,10 @@ def load_all_data(data_folder="data"):
     """
     all_data = []
     
-    # Verificamos si la carpeta 'data' existe
     if not os.path.isdir(data_folder):
         st.error(f"Error: No se encontró la carpeta '{data_folder}'. Asegúrate de que exista en el mismo directorio que el script.")
         return pd.DataFrame()
 
-    # Listamos solo los archivos .csv en la carpeta
     filenames = [f for f in os.listdir(data_folder) if f.endswith('.csv')]
     if not filenames:
         st.warning(f"No se encontraron archivos .csv en la carpeta '{data_folder}'.")
@@ -36,10 +34,8 @@ def load_all_data(data_folder="data"):
     for filename in filenames:
         file_path = os.path.join(data_folder, filename)
         try:
-            # Leemos el CSV y extraemos la fecha del nombre del archivo
             df = pd.read_csv(file_path)
             date_str = filename.replace('.csv', '')
-            # Convertimos la fecha a un formato estándar (YYYY-MM-DD)
             df['date'] = pd.to_datetime(date_str, format='%d-%m-%y')
             all_data.append(df)
         except Exception as e:
@@ -48,7 +44,6 @@ def load_all_data(data_folder="data"):
     if not all_data:
         return pd.DataFrame()
         
-    # Combinamos todos los dataframes en uno solo
     combined_df = pd.concat(all_data, ignore_index=True)
     return combined_df
 
@@ -57,7 +52,8 @@ def run_simulation(df, new_tier):
     Crea una copia de los datos de 'gliquid', la renombra a 'gliquid_test'
     y recalcula el APY con el nuevo tier.
     """
-    if df.empty or 'dex' not in df.columns:
+    if df.empty or 'dex' not in df.columns or 'address' not in df.columns:
+        st.error("Los datos deben contener las columnas 'dex' y 'address'.")
         return df
 
     gliquid_df = df[df['dex'] == 'gliquid'].copy()
@@ -78,7 +74,6 @@ def run_simulation(df, new_tier):
 
 # --- Interfaz de Usuario ---
 
-# 1. Slider para la simulación
 st.subheader("1. Simulación para 'gliquid_test'")
 simulated_tier = st.slider(
     "Selecciona el Fee Tier para la simulación de 'gliquid_test':",
@@ -86,22 +81,18 @@ simulated_tier = st.slider(
 )
 
 # --- Lógica Principal ---
-# Cargamos los datos directamente
 historical_df = load_all_data()
 
 if not historical_df.empty:
-    # Ejecutamos la simulación
     analysis_df = run_simulation(historical_df, simulated_tier)
     
-    # Creamos un identificador único para cada línea del gráfico
-    analysis_df['identifier'] = analysis_df['pair'] + " (" + analysis_df['dex'] + ")"
+    # CORRECCIÓN: Se crea un identificador único usando 'address' y 'dex'
+    analysis_df['identifier'] = analysis_df['address'].astype(str) + " (" + analysis_df['dex'] + ")"
     
     st.subheader("2. Análisis y Comparativa")
     
-    # 2. Filtro para seleccionar qué pools mostrar
     all_pools = sorted(analysis_df['identifier'].unique())
     
-    # Por defecto seleccionamos gliquid y gliquid_test si existen
     default_selection = [p for p in all_pools if 'gliquid' in p]
     
     selected_pools = st.multiselect(
@@ -111,17 +102,15 @@ if not historical_df.empty:
     )
 
     if selected_pools:
-        # Filtramos el dataframe final para el gráfico
         chart_df = analysis_df[analysis_df['identifier'].isin(selected_pools)]
 
-        # 3. Gráfico
         fig = px.line(
             chart_df,
             x='date',
             y='apy24h',
             color='identifier',
             title="Evolución Histórica del APY",
-            labels={'date': 'Fecha', 'apy24h': 'APY (%)', 'identifier': 'Pool'},
+            labels={'date': 'Fecha', 'apy24h': 'APY (%)', 'identifier': 'Address (DEX)'},
             markers=True
         )
         fig.update_layout(legend_title_text='Pools')
