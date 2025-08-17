@@ -52,16 +52,18 @@ def run_simulation(df, new_tier):
     Crea una copia de los datos de 'gliquid', la renombra a 'gliquid_test'
     y recalcula el APY con el nuevo tier.
     """
-    gliquid_df = df[df['dex'] == 'gliquid'].copy()
+    # CORRECCIÓN: Se usan los nombres de columna correctos del CSV
+    gliquid_df = df[df['DEX'] == 'Gliquid'].copy() # Asumiendo que el nombre es 'Gliquid' con mayúscula
     if gliquid_df.empty:
-        st.info("No se encontraron datos para el DEX 'gliquid' para realizar la simulación.")
+        st.info("No se encontraron datos para el DEX 'Gliquid' para realizar la simulación.")
         return df
 
     gliquid_test_df = gliquid_df.copy()
-    gliquid_test_df['dex'] = 'gliquid_test'
+    gliquid_test_df['DEX'] = 'gliquid_test'
     
-    gliquid_test_df['apy24h'] = gliquid_test_df.apply(
-        lambda row: (new_tier * row['volume24h2'] / row['tvl']) * 365 if row['tvl'] > 0 else 0,
+    # CORRECCIÓN: Se usan los nombres de columna correctos del CSV para el cálculo
+    gliquid_test_df['APY_24h'] = gliquid_test_df.apply(
+        lambda row: (new_tier * row['Volume_24h'] / row['TVL']) * 365 if row['TVL'] > 0 else 0,
         axis=1
     )
     
@@ -81,25 +83,27 @@ historical_df = load_all_data()
 
 if not historical_df.empty:
     # --- Verificación de Columnas ---
-    # CORRECCIÓN: Se añade una comprobación para asegurar que las columnas necesarias existen.
-    required_columns = ['address', 'dex', 'volume24h2', 'tvl']
+    # CORRECCIÓN: Se actualiza la lista con los nombres de columna correctos
+    required_columns = ['Address', 'DEX', 'Volume_24h', 'TVL', 'APY_24h']
     missing_columns = [col for col in required_columns if col not in historical_df.columns]
     
     if missing_columns:
         st.error(f"Error: Faltan las siguientes columnas en tus archivos CSV: **{', '.join(missing_columns)}**.")
         st.info(f"Las columnas que se encontraron en tus archivos son: **{', '.join(historical_df.columns)}**")
-        st.stop() # Detiene la ejecución si faltan columnas
+        st.stop()
 
     # --- Continuación de la Lógica ---
     analysis_df = run_simulation(historical_df, simulated_tier)
     
-    analysis_df['identifier'] = analysis_df['address'].astype(str) + " (" + analysis_df['dex'] + ")"
+    # CORRECCIÓN: Se usan los nombres de columna correctos para crear el identificador
+    analysis_df['identifier'] = analysis_df['Address'].astype(str) + " (" + analysis_df['DEX'] + ")"
     
     st.subheader("2. Análisis y Comparativa")
     
     all_pools = sorted(analysis_df['identifier'].unique())
     
-    default_selection = [p for p in all_pools if 'gliquid' in p]
+    # CORRECCIÓN: Se ajusta el filtro por defecto
+    default_selection = [p for p in all_pools if 'Gliquid' in p or 'gliquid_test' in p]
     
     selected_pools = st.multiselect(
         "Selecciona los pools a visualizar en el gráfico:",
@@ -113,10 +117,10 @@ if not historical_df.empty:
         fig = px.line(
             chart_df,
             x='date',
-            y='apy24h',
+            y='APY_24h', # CORRECCIÓN: Se usa la columna correcta para el eje Y
             color='identifier',
             title="Evolución Histórica del APY",
-            labels={'date': 'Fecha', 'apy24h': 'APY (%)', 'identifier': 'Address (DEX)'},
+            labels={'date': 'Fecha', 'APY_24h': 'APY (%)', 'identifier': 'Address (DEX)'},
             markers=True
         )
         fig.update_layout(legend_title_text='Pools')
