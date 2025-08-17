@@ -76,7 +76,7 @@ def load_all_data(data_folder="data"):
 
 def run_simulation(df, new_tier):
     """
-    Encuentra el 'gliquid' con el APY más alto en general y usa su TVL y volumen
+    Para cada par, encuentra el 'gliquid' con el APY más alto y usa su TVL y volumen
     como base constante para la simulación de 'gliquid_test' en todos los días.
     """
     df['dex'] = df['dex'].str.lower()
@@ -86,35 +86,41 @@ def run_simulation(df, new_tier):
         st.info("No se encontraron datos para el DEX 'gliquid' para realizar la simulación.")
         return df
 
-    # --- CORRECCIÓN: Encontrar la mejor instancia de 'gliquid' en todo el período ---
-    best_gliquid_overall = gliquid_df.loc[gliquid_df['apy_24h'].idxmax()]
+    all_simulation_rows = []
     
-    # Usar su TVL y Volumen como constantes
-    constant_tvl = best_gliquid_overall['tvl']
-    constant_volume = best_gliquid_overall['volume_24h']
-    
-    # Obtener todas las fechas únicas para crear la serie temporal de la simulación
-    unique_dates = df['date'].unique()
-    
-    simulation_rows = []
-    for date in unique_dates:
-        # Calcular el APY simulado
-        new_apy = (new_tier * constant_volume / constant_tvl) * 365 if constant_tvl > 0 else 0
+    # --- CORRECCIÓN: Agrupar por 'pair' para que la simulación sea específica para cada uno ---
+    for pair_name, pair_group in gliquid_df.groupby('pair'):
+        if pair_group.empty:
+            continue
+            
+        # Encontrar la mejor instancia de 'gliquid' para este par específico
+        best_gliquid_for_pair = pair_group.loc[pair_group['apy_24h'].idxmax()]
         
-        # Crear una nueva fila para cada día
-        new_row = best_gliquid_overall.copy()
-        new_row['date'] = date
-        new_row['dex'] = 'gliquid_test'
-        new_row['tier'] = new_tier
-        new_row['tvl'] = constant_tvl
-        new_row['volume_24h'] = constant_volume
-        new_row['apy_24h'] = new_apy
-        simulation_rows.append(new_row)
+        # Usar su TVL y Volumen como constantes para la simulación de este par
+        constant_tvl = best_gliquid_for_pair['tvl']
+        constant_volume = best_gliquid_for_pair['volume_24h']
+        
+        # Obtener las fechas únicas donde aparece este par
+        unique_dates_for_pair = df[df['pair'] == pair_name]['date'].unique()
+        
+        for date in unique_dates_for_pair:
+            # Calcular el APY simulado
+            new_apy = (new_tier * constant_volume / constant_tvl) * 365 if constant_tvl > 0 else 0
+            
+            # Crear una nueva fila para cada día
+            new_row = best_gliquid_for_pair.copy()
+            new_row['date'] = date
+            new_row['dex'] = 'gliquid_test'
+            new_row['tier'] = new_tier
+            new_row['tvl'] = constant_tvl
+            new_row['volume_24h'] = constant_volume
+            new_row['apy_24h'] = new_apy
+            all_simulation_rows.append(new_row)
 
-    if not simulation_rows:
+    if not all_simulation_rows:
         return df
 
-    gliquid_test_df = pd.DataFrame(simulation_rows)
+    gliquid_test_df = pd.DataFrame(all_simulation_rows)
     
     return pd.concat([df, gliquid_test_df], ignore_index=True)
 
@@ -148,6 +154,10 @@ if not historical_df.empty:
     
     analysis_df['identifier'] = analysis_df['address'].astype(str) + " (" + analysis_df['dex'] + ")"
     
+    # --- CORRECCIÓN: Añadir una tabla de datos para depuración ---
+    if st.checkbox("Mostrar tabla de datos generados"):
+        st.dataframe(analysis_df)
+
     st.subheader("2. Análisis y Comparativa")
     
     all_pairs = sorted(analysis_df['pair'].str.lower().unique())
