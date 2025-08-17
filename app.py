@@ -33,7 +33,6 @@ def load_all_data(data_folder="data"):
         st.warning(f"No se encontraron archivos .csv en la carpeta '{data_folder}'.")
         return pd.DataFrame(), []
 
-    # CORRECCIÓN: Se actualizó el año a 2025
     start_date = datetime.strptime("10-08-25", "%d-%m-%y").date()
     end_date = datetime.strptime("16-08-25", "%d-%m-%y").date()
     loaded_files = []
@@ -70,9 +69,10 @@ def load_all_data(data_folder="data"):
     
     return combined_df, loaded_files
 
-def run_simulation(df, new_tier, new_tvl, new_volume):
+def run_simulation(df, new_tier):
     """
-    Crea una copia de 'gliquid', la renombra a 'gliquid_test' y recalcula el APY con los nuevos parámetros.
+    Para cada día, encuentra el 'gliquid' con mayor APY, crea una copia 'gliquid_test'
+    y recalcula el APY solo con el nuevo tier.
     """
     df['dex'] = df['dex'].str.lower()
     
@@ -81,29 +81,27 @@ def run_simulation(df, new_tier, new_tvl, new_volume):
         st.info("No se encontraron datos para el DEX 'gliquid' para realizar la simulación.")
         return df
 
-    gliquid_test_df = gliquid_df.copy()
+    # Encontrar el índice del 'gliquid' con el APY más alto para cada día
+    best_gliquid_indices = gliquid_df.loc[gliquid_df.groupby('date')['apy_24h'].idxmax()]
+    
+    gliquid_test_df = best_gliquid_indices.copy()
     gliquid_test_df['dex'] = 'gliquid_test'
     
-    # CORRECCIÓN: Se usan los valores de la calculadora para recalcular el APY
-    gliquid_test_df['apy_24h'] = (new_tier * new_volume / new_tvl) * 365 if new_tvl > 0 else 0
+    # Recalcular el APY usando el nuevo tier, pero el TVL y volumen del mejor 'gliquid' de ese día
+    gliquid_test_df['apy_24h'] = (new_tier * gliquid_test_df['volume_24h'] / gliquid_test_df['tvl']) * 365 if not gliquid_test_df.empty and gliquid_test_df['tvl'].iloc[0] > 0 else 0
     gliquid_test_df['tier'] = new_tier
-    gliquid_test_df['tvl'] = new_tvl
-    gliquid_test_df['volume_24h'] = new_volume
     
     return pd.concat([df, gliquid_test_df], ignore_index=True)
 
 
 # --- Interfaz de Usuario ---
 
-# CORRECCIÓN: Se reintroduce la calculadora global
-st.subheader("1. Calculadora y Simulación para 'gliquid_test'")
-col1, col2, col3 = st.columns(3)
-with col1:
-    simulated_tier = st.number_input("Tier", value=1.0, step=0.05, format="%.2f")
-with col2:
-    simulated_tvl = st.number_input("TVL", value=100000, step=10000)
-with col3:
-    simulated_volume = st.number_input("Volumen 24h", value=50000, step=10000)
+# CORRECCIÓN: La calculadora ahora solo modifica el tier
+st.subheader("1. Simulación para 'gliquid_test'")
+simulated_tier = st.slider(
+    "Selecciona el Fee Tier para la simulación:",
+    min_value=0.01, max_value=5.0, value=1.0, step=0.05, format="%.2f"
+)
 
 
 # --- Lógica Principal ---
@@ -122,8 +120,8 @@ if not historical_df.empty:
         st.info(f"Columnas encontradas (en minúsculas): **{', '.join(historical_df.columns)}**")
         st.stop()
 
-    # Se pasan los valores de la calculadora a la simulación
-    analysis_df = run_simulation(historical_df, simulated_tier, simulated_tvl, simulated_volume)
+    # Se pasa solo el tier a la simulación
+    analysis_df = run_simulation(historical_df, simulated_tier)
     
     analysis_df['identifier'] = analysis_df['address'].astype(str) + " (" + analysis_df['dex'] + ")"
     
