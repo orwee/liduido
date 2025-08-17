@@ -52,10 +52,6 @@ def run_simulation(df, new_tier):
     Crea una copia de los datos de 'gliquid', la renombra a 'gliquid_test'
     y recalcula el APY con el nuevo tier.
     """
-    if df.empty or 'dex' not in df.columns or 'address' not in df.columns:
-        st.error("Los datos deben contener las columnas 'dex' y 'address'.")
-        return df
-
     gliquid_df = df[df['dex'] == 'gliquid'].copy()
     if gliquid_df.empty:
         st.info("No se encontraron datos para el DEX 'gliquid' para realizar la simulación.")
@@ -84,9 +80,19 @@ simulated_tier = st.slider(
 historical_df = load_all_data()
 
 if not historical_df.empty:
+    # --- Verificación de Columnas ---
+    # CORRECCIÓN: Se añade una comprobación para asegurar que las columnas necesarias existen.
+    required_columns = ['address', 'dex', 'volume24h2', 'tvl']
+    missing_columns = [col for col in required_columns if col not in historical_df.columns]
+    
+    if missing_columns:
+        st.error(f"Error: Faltan las siguientes columnas en tus archivos CSV: **{', '.join(missing_columns)}**.")
+        st.info(f"Las columnas que se encontraron en tus archivos son: **{', '.join(historical_df.columns)}**")
+        st.stop() # Detiene la ejecución si faltan columnas
+
+    # --- Continuación de la Lógica ---
     analysis_df = run_simulation(historical_df, simulated_tier)
     
-    # CORRECCIÓN: Se crea un identificador único usando 'address' y 'dex'
     analysis_df['identifier'] = analysis_df['address'].astype(str) + " (" + analysis_df['dex'] + ")"
     
     st.subheader("2. Análisis y Comparativa")
