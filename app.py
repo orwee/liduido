@@ -57,10 +57,10 @@ def highlight_dex(row):
     """
     Resalta las filas de 'gliquid' y 'gliquid_test'.
     """
-    # CORRECCIÓN: Se cambió el color a un gris claro para mejor visibilidad
-    color = 'background-color: #E5E7E9' 
+    # CORRECCIÓN: Se cambió el color a un azul oscuro y el texto a blanco.
+    style = 'background-color: #2E4053; color: white;' 
     if row.dex in ['gliquid', 'gliquid_test']:
-        return [color] * len(row)
+        return [style] * len(row)
     else:
         return [''] * len(row)
 
