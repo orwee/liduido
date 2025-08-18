@@ -89,8 +89,6 @@ simulated_tier = st.slider(
     "Selecciona el Fee Tier para la simulación:",
     min_value=0.01, max_value=5.0, value=1.0, step=0.05, format="%.2f%%"
 )
-# Convertimos el tier a valor decimal para los cálculos
-simulated_tier_decimal = simulated_tier / 100.0
 
 # --- Lógica Principal ---
 historical_df, loaded_files = load_all_data()
@@ -144,14 +142,16 @@ if not historical_df.empty:
                 daily_tvl = best_row_for_day['tvl']
                 daily_volume = best_row_for_day['volume_24h']
                 
-                # Calculamos el nuevo APY simulado con el tier seleccionado.
-                new_apy = (simulated_tier_decimal * daily_volume / daily_tvl) * 365 if daily_tvl > 0 else 0
+                # --- FÓRMULA CORREGIDA SEGÚN SOLICITUD DEL USUARIO ---
+                # Se usa la fórmula: volumen * tier / tvl * 100 * 365
+                # 'simulated_tier' es el valor porcentual del slider (ej: 1.0 para 1%)
+                new_apy = (daily_volume * simulated_tier / daily_tvl) * 100 * 365 if daily_tvl > 0 else 0
                 
                 # Creamos la nueva fila para la simulación.
                 new_row = best_row_for_day.copy()
                 new_row['dex'] = 'gliquid_test'
                 new_row['tier'] = simulated_tier # Guardamos el tier en %
-                new_row['apy_24h'] = new_apy * 100 # Guardamos el APY en %
+                new_row['apy_24h'] = new_apy # El APY ya está calculado como el valor final
                 all_simulation_rows.append(new_row)
 
         # 4. Combinar los dataframes para el gráfico final
