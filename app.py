@@ -163,10 +163,10 @@ if not historical_df.empty:
                 daily_tvl = best_row_for_day['tvl']
                 daily_volume = best_row_for_day['volume_24h']
                 
-                # --- FÓRMULA CORREGIDA SEGÚN SOLICITUD DEL USUARIO ---
-                # Se usa la fórmula: volumen * tier / tvl * 100 * 365
+                # --- FÓRMULA CORREGIDA: Se elimina el * 100 ---
+                # Se usa la fórmula: volumen * tier / tvl * 365
                 # 'simulated_tier' es el valor porcentual del slider (ej: 1.0 para 1%)
-                new_apy = (daily_volume * simulated_tier / daily_tvl) * 100 * 365 if daily_tvl > 0 else 0
+                new_apy = (daily_volume * simulated_tier / daily_tvl) * 365 if daily_tvl > 0 else 0
                 
                 # Creamos la nueva fila para la simulación.
                 new_row = best_row_for_day.copy()
@@ -187,7 +187,11 @@ if not historical_df.empty:
         
         # Mostramos la tabla por defecto para facilitar la verificación de datos
         if st.checkbox("Mostrar tabla de datos del gráfico", value=True):
-            st.dataframe(chart_df[['date', 'pair', 'dex', 'tier', 'tvl', 'volume_24h', 'apy_24h']].sort_values(by=['date', 'pair']))
+            # --- FORMATO DE VISUALIZACIÓN CORREGIDO ---
+            display_df = chart_df[['date', 'pair', 'dex', 'tier', 'tvl', 'volume_24h', 'apy_24h']].copy()
+            display_df['tvl'] = display_df['tvl'].astype(int)
+            display_df['volume_24h'] = display_df['volume_24h'].astype(int)
+            st.dataframe(display_df.sort_values(by=['date', 'pair']))
 
         fig = px.line(
             chart_df,
