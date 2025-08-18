@@ -183,3 +183,4 @@ if not historical_df.empty:
         st.info("Selecciona al menos un par para generar el gráfico.")
 else:
     st.info("Esperando a que se carguen los datos...")
+ 
