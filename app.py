@@ -123,49 +123,44 @@ if not historical_df.empty:
 
     if selected_pairs:
         # 1. Filtrar los datos base por los pares seleccionados
-        chart_df = historical_df[historical_df['pair'].str.lower().isin(selected_pairs)].copy()
+        filtered_df = historical_df[historical_df['pair'].str.lower().isin(selected_pairs)].copy()
         
-        # 2. Generar la simulación 'gliquid_test'
-        gliquid_base_df = chart_df[chart_df['dex'].str.lower() == 'gliquid'].copy()
+        # 2. Separar 'gliquid' de otros DEXs y encontrar el mejor 'gliquid' por día/par
+        gliquid_df = filtered_df[filtered_df['dex'].str.lower() == 'gliquid'].copy()
+        other_dex_df = filtered_df[filtered_df['dex'].str.lower() != 'gliquid'].copy()
         
-        if not gliquid_base_df.empty:
-            all_simulation_rows = []
-            
-            # --- LÓGICA CORREGIDA ---
-            # Agrupamos por fecha para procesar cada día de forma independiente.
-            for date, daily_group in gliquid_base_df.groupby('date'):
-                # Para cada día, buscamos el mejor pool 'gliquid' para cada par seleccionado.
-                for pair_name in selected_pairs:
-                    # Filtramos los datos del día para el par actual.
-                    daily_pair_group = daily_group[daily_group['pair'].str.lower() == pair_name]
+        best_gliquid_df = pd.DataFrame()
+        if not gliquid_df.empty:
+            # Encontrar la mejor fila de gliquid para cada combinación de fecha y par
+            best_gliquid_indices = gliquid_df.groupby(['date', 'pair'])['apy_24h'].idxmax()
+            best_gliquid_df = gliquid_df.loc[best_gliquid_indices].copy()
+            # Cambiamos el nombre del dex para que sea claro en la leyenda del gráfico
+            best_gliquid_df['dex'] = 'gliquid (best)'
 
-                    if not daily_pair_group.empty:
-                        # Encontramos la fila con el APY más alto para ESE DÍA y par.
-                        best_row_for_day = daily_pair_group.loc[daily_pair_group['apy_24h'].idxmax()]
-                        
-                        # Usamos el TVL y Volumen de esa fila específica para la simulación.
-                        daily_tvl = best_row_for_day['tvl']
-                        daily_volume = best_row_for_day['volume_24h']
-                        
-                        # Calculamos el nuevo APY simulado con el tier seleccionado.
-                        new_apy = (simulated_tier_decimal * daily_volume / daily_tvl) * 365 if daily_tvl > 0 else 0
-                        
-                        # Creamos la nueva fila para la simulación.
-                        new_row = best_row_for_day.copy()
-                        new_row['date'] = date # Nos aseguramos que la fecha sea la correcta
-                        new_row['dex'] = 'gliquid_test'
-                        new_row['tier'] = simulated_tier # Guardamos el tier en %
-                        new_row['apy_24h'] = new_apy * 100 # Guardamos el APY en %
-                        # TVL y Volume_24h se mantienen igual que la mejor fila de ese día.
-                        
-                        all_simulation_rows.append(new_row)
+        # 3. Generar la simulación 'gliquid_test' a partir del mejor 'gliquid' de cada día
+        all_simulation_rows = []
+        if not best_gliquid_df.empty:
+            for index, best_row_for_day in best_gliquid_df.iterrows():
+                daily_tvl = best_row_for_day['tvl']
+                daily_volume = best_row_for_day['volume_24h']
+                
+                # Calculamos el nuevo APY simulado con el tier seleccionado.
+                new_apy = (simulated_tier_decimal * daily_volume / daily_tvl) * 365 if daily_tvl > 0 else 0
+                
+                # Creamos la nueva fila para la simulación.
+                new_row = best_row_for_day.copy()
+                new_row['dex'] = 'gliquid_test'
+                new_row['tier'] = simulated_tier # Guardamos el tier en %
+                new_row['apy_24h'] = new_apy * 100 # Guardamos el APY en %
+                all_simulation_rows.append(new_row)
 
-            if all_simulation_rows:
-                gliquid_test_df = pd.DataFrame(all_simulation_rows)
-                # Combinamos los datos originales con la simulación.
-                chart_df = pd.concat([chart_df, gliquid_test_df], ignore_index=True)
+        # 4. Combinar los dataframes para el gráfico final
+        chart_df = pd.concat([other_dex_df, best_gliquid_df], ignore_index=True)
+        if all_simulation_rows:
+            gliquid_test_df = pd.DataFrame(all_simulation_rows)
+            chart_df = pd.concat([chart_df, gliquid_test_df], ignore_index=True)
 
-        # 3. Preparar y mostrar el gráfico y la tabla
+        # 5. Preparar y mostrar el gráfico y la tabla
         # Creamos un identificador único para cada línea del gráfico
         chart_df['identifier'] = chart_df['pair'].astype(str) + " (" + chart_df['dex'] + ", Tier: " + chart_df['tier'].round(2).astype(str) + "%)"
         
