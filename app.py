@@ -16,6 +16,17 @@ st.markdown("Esta aplicación carga datos históricos (10-16 ago 2025), los filt
 
 # --- Funciones de Carga y Procesamiento ---
 
+def parse_k_m_values(value):
+    """
+    Convierte un valor de string con sufijo 'K' (miles) o 'M' (millones) a un número flotante.
+    """
+    value_str = str(value).strip().upper()
+    if value_str.endswith('K'):
+        return float(value_str[:-1]) * 1_000
+    if value_str.endswith('M'):
+        return float(value_str[:-1]) * 1_000_000
+    return pd.to_numeric(value, errors='coerce')
+
 @st.cache_data(ttl=600)
 def load_all_data(data_folder="data"):
     """
@@ -66,11 +77,21 @@ def load_all_data(data_folder="data"):
     # Estandariza los nombres de las columnas a minúsculas
     combined_df.columns = [col.lower() for col in combined_df.columns]
 
-    # Asegura que las columnas numéricas tengan el tipo correcto
-    numeric_cols = ['volume_24h', 'tvl', 'apy_24h', 'tier']
+    # --- LÓGICA DE PARSEO CORREGIDA ---
+    # Aplica la función de conversión a las columnas que pueden tener 'K' o 'M'
+    cols_to_parse = ['volume_24h', 'volume_6h', 'volume_1h', 'fees_24h']
+    for col in cols_to_parse:
+        if col in combined_df.columns:
+            combined_df[col] = combined_df[col].apply(parse_k_m_values)
+
+    # Asegura que el resto de columnas numéricas tengan el tipo correcto
+    numeric_cols = ['tvl', 'apy_24h', 'tier']
     for col in numeric_cols:
         if col in combined_df.columns:
-            combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce').fillna(0)
+            combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce')
+
+    # Rellena con 0 los valores nulos que puedan quedar tras la conversión
+    combined_df = combined_df.fillna(0)
 
     # Filtra los datos para la blockchain 'hyperevm'
     if 'blockchain' in combined_df.columns:
@@ -183,4 +204,3 @@ if not historical_df.empty:
         st.info("Selecciona al menos un par para generar el gráfico.")
 else:
     st.info("Esperando a que se carguen los datos...")
- 
