@@ -6,7 +6,7 @@ from datetime import datetime
 
 # --- Configuración de la página ---
 st.set_page_config(
-    page_title="Análisis Histórico de APY",
+    page_title="Gliquid analysis",
     page_icon="📈",
     layout="wide"
 )
