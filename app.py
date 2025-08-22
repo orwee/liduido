@@ -343,7 +343,7 @@ with tab2:
             if not all(c in df_tokens.columns for c in needed_cols):
                 st.error(f"El CSV debe contener las columnas: {', '.join(needed_cols)}")
             else:
-                df_gliquid = df_tokens[df_tokens["dex"].astype(str) == "Gliquid"].drop_duplicates(subset=["pair"]).reset_index(drop=True)
+                df_gliquid = df_tokens[df_tokens["dex"].astype(str) == "gliquid"].drop_duplicates(subset=["pair"]).reset_index(drop=True)
                 
                 if df_gliquid.empty:
                     st.warning("No se encontraron pares con 'dex' igual a 'Gliquid' en el archivo.")
