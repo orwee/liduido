@@ -4,8 +4,6 @@ import plotly.express as px
 import requests
 from decimal import Decimal, getcontext
 import time
-import io
-import json
 
 # --- Configuración General de la Página ---
 st.set_page_config(
@@ -22,7 +20,7 @@ getcontext().prec = 48
 tab1, tab2, tab3 = st.tabs([
     "📈 Análisis Histórico APY",
     "💧 Calculadora de Price Impact",
-    " маршрут Simulador de Rutas"
+    "🛤️ Simulador de Rutas"
 ])
 
 # ==============================================================================
@@ -56,8 +54,8 @@ with tab1:
             df.columns = [col.lower() for col in df.columns]
 
             if 'date' not in df.columns:
-                 st.error("El CSV debe contener una columna 'date'.")
-                 return pd.DataFrame()
+                st.error("El CSV debe contener una columna 'date'.")
+                return pd.DataFrame()
             df['date'] = pd.to_datetime(df['date'])
 
             cols_to_parse = ['volume_24h', 'volume_6h', 'volume_1h', 'fees_24h']
@@ -83,7 +81,6 @@ with tab1:
 
     # --- Interfaz de Usuario (Pestaña 1) ---
     uploaded_file_tab1 = st.file_uploader("Sube tu archivo de datos históricos (.csv)", type="csv", key="uploader_tab1")
-    
     historical_df = load_historical_data(uploaded_file_tab1)
 
     if not historical_df.empty:
@@ -109,7 +106,6 @@ with tab1:
             )
 
             if selected_pairs:
-                # Lógica de filtrado y simulación
                 filtered_df = historical_df[historical_df['pair'].str.lower().isin([p.lower() for p in selected_pairs])].copy()
                 gliquid_df = filtered_df[filtered_df['dex'].str.lower() == 'gliquid'].copy()
                 other_dex_df = filtered_df[filtered_df['dex'].str.lower() != 'gliquid'].copy()
@@ -137,12 +133,14 @@ with tab1:
                 if all_simulation_rows:
                     chart_df = pd.concat([chart_df, pd.DataFrame(all_simulation_rows)], ignore_index=True)
 
+                chart_df['apy_24h'] *= 100  # convertir a porcentaje
                 chart_df['identifier'] = chart_df['pair'] + " (" + chart_df['dex'] + ", Tier: " + chart_df['tier'].round(2).astype(str) + "%)"
                 
                 if st.checkbox("Mostrar tabla de datos del gráfico", value=True, key="checkbox_tab1"):
                     display_df = chart_df[['date', 'pair', 'dex', 'tier', 'tvl', 'volume_24h', 'apy_24h']].copy()
                     display_df['tvl'] = display_df['tvl'].map('{:,.0f}'.format)
                     display_df['volume_24h'] = display_df['volume_24h'].map('{:,.0f}'.format)
+                    display_df['apy_24h'] = display_df['apy_24h'].map('{:,.2f}%'.format)
                     st.dataframe(display_df.sort_values(by=['date', 'pair']))
 
                 fig = px.line(
@@ -183,16 +181,17 @@ with tab2:
         st.info(f"Se analizarán {len(df_pairs)} pares. Esto puede tardar varios minutos...")
         progress_bar = st.progress(0)
         status_text = st.empty()
-        total_steps = len(df_pairs) * 2 # Normal + Inverso
+        total_steps = len(df_pairs) * 2 * len(amounts)
+        current_step = 0
 
-        for i, (_, r) in enumerate(df_pairs.iterrows()):
+        for _, r in df_pairs.iterrows():
             pair_name, tA, tB = r["pair"], r["tokenaddress"], r["quotetokenaddress"]
             
             for inverse_flag, (tokenA, tokenB) in (("NO", (tA, tB)), ("YES", (tB, tA))):
-                status_text.text(f"Analizando Par: {pair_name} ({'Inverso' if inverse_flag == 'YES' else 'Normal'})...")
                 try:
                     pools = fetch_pools_tab2(tokenA, tokenB)
-                    if not pools: continue
+                    if not pools: 
+                        continue
                     
                     router_indices = sorted({int(p.get("routerIndex")) for p in pools if p.get("routerIndex") is not None})
                     
@@ -202,13 +201,18 @@ with tab2:
                         exclude_str = ",".join([str(x) for x in router_indices if x != routerIndex]) or None
 
                         for amt in amounts:
-                            time.sleep(0.35)
-                            resp = call_route_tab2(tokenA, tokenB, amt, excludeDexes=exclude_str)
-                            base_row[f"amount_{amt}_avgPriceImpact"] = resp.get("averagePriceImpact", "N/A")
+                            current_step += 1
+                            status_text.text(f"Analizando {pair_name} ({'Inverso' if inverse_flag == 'YES' else 'Normal'}) | Monto: {amt}")
+                            try:
+                                time.sleep(0.35)
+                                resp = call_route_tab2(tokenA, tokenB, amt, excludeDexes=exclude_str)
+                                base_row[f"amount_{amt}_avgPriceImpact"] = resp.get("averagePriceImpact", "N/A")
+                            except Exception as e:
+                                base_row[f"amount_{amt}_avgPriceImpact"] = f"Error: {e}"
+                            progress_bar.progress(current_step / total_steps)
                         all_rows.append(base_row)
                 except Exception as e:
                     st.warning(f"Error en par {pair_name} ({inverse_flag}): {e}")
-            progress_bar.progress((i + 1) / total_steps)
         
         status_text.success("¡Análisis de Price Impact completado!")
         return pd.DataFrame(all_rows)
@@ -286,8 +290,8 @@ with tab3:
                                     row[f"hop_{i+1}_amountIn"] = swap.get("amountIn")
                                     row[f"hop_{i+1}_priceImpact"] = swap.get("priceImpact")
                         out_rows.append(row)
-                    except Exception:
-                         out_rows.append({"pair": pair_name, "inverse": inverse_flag, "amount_requested": amt, "error": "Fallo en la API"})
+                    except Exception as e:
+                        out_rows.append({"pair": pair_name, "inverse": inverse_flag, "amount_requested": amt, "error": str(e)})
                     progress_bar.progress(current_step / total_steps)
         
         status_text.success("¡Simulación de rutas completada!")
