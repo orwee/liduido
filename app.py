@@ -93,8 +93,9 @@ with tab1:
 
         numeric_cols = ['tvl', 'apy_24h', 'tier']
         for col in numeric_cols:
-            if col in combined_df.columns:
-                combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce')
+            if col in numeric_cols:
+                if col in combined_df.columns:
+                    combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce')
 
         combined_df = combined_df.fillna(0)
 
@@ -159,13 +160,12 @@ with tab1:
                     daily_tvl = best_row_for_day['tvl']
                     daily_volume = best_row_for_day['volume_24h']
                     
-                    # Se usa la fórmula: volumen * (tier/100) / tvl * 365
                     new_apy = (daily_volume * (simulated_tier / 100) / daily_tvl) * 365 if daily_tvl > 0 else 0
                     
                     new_row = best_row_for_day.copy()
                     new_row['dex'] = 'gliquid_test'
                     new_row['tier'] = simulated_tier
-                    new_row['apy_24h'] = new_apy * 100 # Se multiplica por 100 para que sea porcentual
+                    new_row['apy_24h'] = new_apy * 100
                     all_simulation_rows.append(new_row)
 
             chart_df = pd.concat([other_dex_df, best_gliquid_df], ignore_index=True)
@@ -343,7 +343,8 @@ with tab2:
             if not all(c in df_tokens.columns for c in needed_cols):
                 st.error(f"El CSV debe contener las columnas: {', '.join(needed_cols)}")
             else:
-                df_gliquid = df_tokens[df_tokens["dex"].astype(str) == "gliquid"].drop_duplicates(subset=["pair"]).reset_index(drop=True)
+                # <-- LÍNEA CORREGIDA
+                df_gliquid = df_tokens[df_tokens["dex"].astype(str).str.lower() == "gliquid"].drop_duplicates(subset=["pair"]).reset_index(drop=True)
                 
                 if df_gliquid.empty:
                     st.warning("No se encontraron pares con 'dex' igual a 'Gliquid' en el archivo.")
@@ -362,12 +363,10 @@ with tab2:
                             st.markdown(f"--- \n### Analizando Par: **{pair_name}** ({idx + 1}/{total_pairs})")
                             pair_progress = st.progress(0.0)
                             
-                            # Normal
                             log_area.info(f"Ejecutando {pair_name}: {tokenA} / {tokenB} (inverse=NO)")
                             rows_normal = analyze_pair(tokenA, tokenB, pair_name, "NO", log_area, pair_progress)
                             all_rows.extend(rows_normal)
                             
-                            # Inverso
                             log_area.info(f"Ejecutando {pair_name}: {tokenB} / {tokenA} (inverse=YES)")
                             rows_inverse = analyze_pair(tokenB, tokenA, pair_name, "YES", log_area, pair_progress)
                             all_rows.extend(rows_inverse)
@@ -381,7 +380,6 @@ with tab2:
                         st.success("🎉 ¡Análisis completado!")
                         df_res = pd.DataFrame(all_rows)
 
-                        # Ordenar y asegurar columnas
                         amount_cols = [f"amount_{amt}_avgPriceImpact" for amt in AMOUNTS]
                         meta_cols = ["pair", "pair_tokenA", "pair_tokenB", "inverse", "poolAddress", "protocol", "routerIndex", "fee_Tier"]
                         final_cols = meta_cols + amount_cols
@@ -392,7 +390,6 @@ with tab2:
                         st.subheader("2. Resultados del Análisis")
                         st.dataframe(df_res)
                         
-                        # Botón de descarga
                         csv_buffer = io.StringIO()
                         df_res.to_csv(csv_buffer, index=False, encoding="utf-8")
                         
