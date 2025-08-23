@@ -10,12 +10,12 @@ import re
 import numpy as np
 
 # ==============================================================================
-# CONFIGURACIÓN GENERAL
+# CONFIGURACIÓN GENERAL Y FUNCIONES AUXILIARES
 # ==============================================================================
 st.set_page_config(page_title="Análisis Gliquid", page_icon="📊", layout="wide")
 getcontext().prec = 60
 
-# --- Helper Functions (Generales y Pestaña 3) ---
+# --- Funciones Generales ---
 def decimal_equal(x, y):
     """Compara dos valores como Decimal de forma segura."""
     try:
@@ -23,52 +23,204 @@ def decimal_equal(x, y):
     except (InvalidOperation, TypeError):
         return False
 
-def compute_amount_pct_routes(df):
-    """Calcula y añade columnas con el porcentaje de volumen por cada hop de la ruta."""
-    if 'amount_requested' not in df.columns: return df
-    
-    df['amount_requested_num'] = pd.to_numeric(df['amount_requested'], errors='coerce')
-    route_cols = sorted([c for c in df.columns if re.match(r'^amount_route_(\d+)$', c)])
-
-    for col in route_cols:
-        n = col.split('_')[-1]
-        pct_col = f'amount_pct_route_{n}'
-        df[col + '_num'] = pd.to_numeric(df[col], errors='coerce')
-        
-        # Evitar división por cero
-        denom = df['amount_requested_num']
-        valid_denom = denom.notna() & (denom != 0)
-        
-        df[pct_col] = np.nan
-        df.loc[valid_denom, pct_col] = (df.loc[valid_denom, col + '_num'] / denom[valid_denom]) * 100
-    
-    # Limpiar columnas temporales
-    df.drop(columns=[c for c in df.columns if c.endswith('_num')], inplace=True)
-    return df
-
+# ==============================================================================
+# INICIO DE LA APLICACIÓN STREAMLIT
+# ==============================================================================
 st.title("📊 Panel de Análisis Gliquid")
 st.markdown("Navega entre las diferentes herramientas de análisis usando las pestañas.")
 
 tab1, tab2, tab3 = st.tabs(["Análisis Histórico APY", "Análisis de Price Impact", "Simulación de Rutas"])
 
 # ==============================================================================
-# PESTAÑA 1: ANÁLISIS HISTÓRICO APY (Sin cambios)
+# PESTAÑA 1: ANÁLISIS HISTÓRICO APY
 # ==============================================================================
 with tab1:
     st.header("📈 Análisis Histórico de APY para HyperEVM")
-    st.info("La funcionalidad de esta pestaña se mantiene sin cambios.")
-    # (Aquí iría el código completo y funcional de la Pestaña 1)
+    st.markdown("Selecciona un rango de fechas, y la app analizará los pares con datos de Gliquid disponibles en ese período.")
+
+    def parse_k_m_values_tab1(value):
+        value_str = str(value).strip().upper()
+        if value_str.endswith('K'): return float(value_str[:-1]) * 1_000
+        if value_str.endswith('M'): return float(value_str[:-1]) * 1_000_000
+        return pd.to_numeric(value, errors='coerce')
+
+    @st.cache_data(ttl=3600)
+    def get_available_dates_tab1(data_folder="data"):
+        if not os.path.isdir(data_folder): return []
+        dates = []
+        for filename in os.listdir(data_folder):
+            if filename.endswith('.csv'):
+                try:
+                    dates.append(datetime.strptime(filename.replace('.csv', ''), "%d-%m-%y").date())
+                except ValueError:
+                    continue
+        return sorted(dates)
+
+    @st.cache_data(ttl=600)
+    def load_data_in_range_tab1(start_date, end_date, data_folder="data"):
+        all_data = []
+        for date_to_load in pd.date_range(start=start_date, end=end_date):
+            filename = date_to_load.strftime("%d-%m-%y") + ".csv"
+            file_path = os.path.join(data_folder, filename)
+            if os.path.exists(file_path):
+                try:
+                    df = pd.read_csv(file_path)
+                    df['date'] = pd.to_datetime(date_to_load)
+                    all_data.append(df)
+                except Exception as e:
+                    st.warning(f"No se pudo cargar {filename}: {e}")
+        
+        if not all_data: return pd.DataFrame()
+
+        combined_df = pd.concat(all_data, ignore_index=True)
+        combined_df.columns = [col.lower() for col in combined_df.columns]
+        
+        for col in ['volume_24h', 'fees_24h']:
+            if col in combined_df.columns: combined_df[col] = combined_df[col].apply(parse_k_m_values_tab1)
+        for col in ['tvl', 'apy_24h', 'tier']:
+             if col in combined_df.columns: combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce')
+
+        combined_df = combined_df.fillna(0)
+        if 'blockchain' in combined_df.columns:
+            combined_df = combined_df[combined_df['blockchain'].str.lower() == 'hyperevm']
+        return combined_df
+
+    available_dates = get_available_dates_tab1()
+    if not available_dates:
+        st.error("No se encontraron archivos CSV en la carpeta 'data'. Asegúrate de que exista y contenga datos.")
+    else:
+        st.sidebar.header("Filtros de Análisis Histórico")
+        date_range = st.sidebar.date_input(
+            "Selecciona el rango de fechas:", value=(available_dates[0], available_dates[-1]),
+            min_value=available_dates[0], max_value=available_dates[-1],
+        )
+
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+            historical_df = load_data_in_range_tab1(start_date, end_date)
+
+            if not historical_df.empty:
+                simulated_tier = st.sidebar.slider("Fee Tier para Simulación:", 0.01, 5.0, 1.0, 0.05, format="%.2f%%")
+                
+                gliquid_pairs = historical_df[historical_df['dex'].str.lower() == 'gliquid']['pair'].str.lower().unique()
+                if not any(gliquid_pairs):
+                    st.warning("No hay datos de 'Gliquid' en el rango de fechas seleccionado.")
+                else:
+                    selected_pairs = st.multiselect("Selecciona Pairs (solo con datos de Gliquid):", options=sorted(gliquid_pairs), default=list(gliquid_pairs)[:1])
+
+                    if selected_pairs:
+                        filtered_df = historical_df[historical_df['pair'].str.lower().isin(selected_pairs)]
+                        gliquid_df = filtered_df[filtered_df['dex'].str.lower() == 'gliquid']
+                        other_dex_df = filtered_df[filtered_df['dex'].str.lower() != 'gliquid']
+                        best_gliquid_df = gliquid_df.loc[gliquid_df.groupby(['date', 'pair'])['apy_24h'].idxmax()].copy()
+                        best_gliquid_df['dex'] = 'gliquid (best)'
+                        
+                        sim_rows = []
+                        for _, row in best_gliquid_df.iterrows():
+                            new_apy = (row['volume_24h'] * (simulated_tier / 100) / row['tvl']) * 365 if row['tvl'] > 0 else 0
+                            new_row = row.copy(); new_row.update({'dex': 'gliquid_test', 'tier': simulated_tier, 'apy_24h': new_apy * 100})
+                            sim_rows.append(new_row)
+                        
+                        chart_df = pd.concat([other_dex_df, best_gliquid_df, pd.DataFrame(sim_rows)], ignore_index=True)
+                        chart_df['identifier'] = chart_df['pair'] + " (" + chart_df['dex'] + ", Tier: " + chart_df['tier'].round(2).astype(str) + "%)"
+
+                        st.subheader("Evolución Histórica del APY")
+                        fig = px.line(chart_df, x='date', y='apy_24h', color='identifier', labels={'date': 'Fecha', 'apy_24h': 'APY 24h (%)'}, markers=True)
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        with st.expander("Mostrar tabla de datos del gráfico"):
+                            st.dataframe(chart_df[['date', 'pair', 'dex', 'tier', 'tvl', 'volume_24h', 'apy_24h']].sort_values(by=['date', 'pair']))
 
 # ==============================================================================
-# PESTAÑA 2: ANÁLISIS DE PRICE IMPACT (Sin cambios)
+# PESTAÑA 2: ANÁLISIS DE PRICE IMPACT
 # ==============================================================================
 with tab2:
     st.header("💧 Análisis de Price Impact para Pools de Gliquid")
-    st.info("La funcionalidad de esta pestaña se mantiene sin cambios.")
-    # (Aquí iría el código completo y funcional de la Pestaña 2)
+    st.markdown("Compara la liquidez de pools analizando el impacto en precio para distintos montos de trade.")
+
+    BASE_POOLS_URL_TAB2 = "https://api.liqd.ag/pools"
+    BASE_ROUTE_URL_TAB2 = "https://api.liqd.ag/v2/route"
+    PAUSE_BETWEEN_REQS_TAB2 = 0.35
+
+    def parse_price_impact_tab2(value):
+        if isinstance(value, str):
+            value = value.strip().replace('%', '')
+            return pd.to_numeric(value, errors='coerce')
+        return pd.to_numeric(value, errors='coerce')
+
+    @st.cache_data(ttl=300)
+    def analyze_pair_tab2(tokenA, tokenB, pair_name, inverse_flag, amounts_to_analyze):
+        rows = []
+        try:
+            r_pools = requests.get(BASE_POOLS_URL_TAB2, params={"tokenA": tokenA, "tokenB": tokenB}, timeout=30)
+            r_pools.raise_for_status()
+            pools = r_pools.json().get("data", [])
+        except Exception as e:
+            st.warning(f"Error al obtener pools para {pair_name}: {e}")
+            return []
+
+        router_indices = sorted({int(p.get("routerIndex")) for p in pools if p.get("routerIndex") is not None})
+        for p in pools:
+            exclude_str = ",".join([str(x) for x in router_indices if x != p.get("routerIndex")])
+            base_row = {"pair": pair_name, "inverse": "YES" if inverse_flag else "NO", "poolAddress": p.get("poolAddress"), "protocol": p.get("protocol")}
+            for amt in amounts_to_analyze:
+                time.sleep(PAUSE_BETWEEN_REQS_TAB2)
+                try:
+                    params = {"tokenIn": tokenA, "tokenOut": tokenB, "amountIn": str(amt), "multiHop": "false", "slippage": "1.0", "excludeDexes": exclude_str}
+                    resp = requests.get(BASE_ROUTE_URL_TAB2, params=params, timeout=30).json()
+                    if resp.get("success") is False:
+                        base_row[f"amount_{amt}"] = f"API Error: {resp.get('message', 'Unknown')}"
+                    else:
+                        base_row[f"amount_{amt}"] = resp.get("averagePriceImpact")
+                except Exception as e:
+                    base_row[f"amount_{amt}"] = f"Request Error: {e}"
+            rows.append(base_row)
+        return rows
+
+    uploaded_file_tab2 = st.file_uploader("Sube tu archivo CSV de pares.", type="csv", key="uploader_tab2")
+    if uploaded_file_tab2:
+        df_gliquid_tab2 = pd.read_csv(uploaded_file_tab2, dtype=str)
+        df_gliquid_tab2 = df_gliquid_tab2[df_gliquid_tab2["dex"].astype(str).str.lower() == "gliquid"].drop_duplicates(subset=["pair"])
+        
+        selected_pair_tab2 = st.selectbox("Selecciona el Par a analizar:", df_gliquid_tab2['pair'].unique(), key="pair_select_tab2")
+        amounts_input_tab2 = st.text_input("Define montos (separados por coma):", "100, 1000, 10000", key="amounts_tab2")
+
+        if st.button(f"🚀 Iniciar Análisis de Liquidez para {selected_pair_tab2}"):
+            try: amounts = [float(x.strip()) for x in amounts_input_tab2.split(',')]
+            except: st.error("Formato de montos incorrecto."); st.stop()
+            
+            pair_row = df_gliquid_tab2[df_gliquid_tab2['pair'] == selected_pair_tab2].iloc[0]
+            tokenA, tokenB = pair_row["tokenaddress"], pair_row["quotetokenaddress"]
+            
+            with st.spinner(f"Analizando '{selected_pair_tab2}'..."):
+                all_rows = analyze_pair_tab2(tokenA, tokenB, selected_pair_tab2, False, amounts)
+                all_rows.extend(analyze_pair_tab2(tokenB, tokenA, selected_pair_tab2, True, amounts))
+            
+            if all_rows:
+                st.success("🎉 Análisis completado!")
+                df_res = pd.DataFrame(all_rows)
+                numeric_cols = []
+                for col_name in [f"amount_{a}" for a in amounts]:
+                    df_res[col_name] = df_res[col_name].apply(parse_price_impact_tab2)
+                    if pd.api.types.is_numeric_dtype(df_res[col_name]):
+                        numeric_cols.append(col_name)
+
+                df_res['pool_label'] = df_res['protocol'] + ' (' + df_res['inverse'] + ')'
+
+                if numeric_cols:
+                    st.subheader("📈 Gráfico Comparativo de Liquidez")
+                    df_melted = df_res.melt(id_vars=['pool_label'], value_vars=numeric_cols, var_name='Monto', value_name='Price Impact (%)').dropna()
+                    df_melted['Monto'] = df_melted['Monto'].str.replace('amount_', '')
+                    fig = px.bar(df_melted, x='Monto', y='Price Impact (%)', color='pool_label', barmode='group', title=f"Comparación de Price Impact para {selected_pair_tab2}")
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                st.subheader("📄 Tabla de Resultados (Price Impact %)")
+                st.dataframe(df_res.set_index('pool_label'))
+            else: 
+                st.error("El análisis no produjo resultados.")
 
 # ==============================================================================
-# PESTAÑA 3: SIMULACIÓN DE RUTAS (LÓGICA ACTUALIZADA)
+# PESTAÑA 3: SIMULACIÓN DE RUTAS
 # ==============================================================================
 with tab3:
     st.header("🔬 Simulación de Rutas Óptimas con Distribución de Volumen")
@@ -93,6 +245,21 @@ with tab3:
                     vv = Decimal(str(v)); return vv * 10000 if vv <= 1 else vv
                 except: continue
         return None
+    
+    def compute_amount_pct_routes(df):
+        if 'amount_requested' not in df.columns: return df
+        df['amount_requested_num'] = pd.to_numeric(df['amount_requested'], errors='coerce')
+        route_cols = sorted([c for c in df.columns if re.match(r'^amount_route_(\d+)$', c)])
+        for col in route_cols:
+            n = col.split('_')[-1]
+            pct_col = f'amount_pct_route_{n}'
+            df[col + '_num'] = pd.to_numeric(df[col], errors='coerce')
+            denom = df['amount_requested_num']
+            valid_denom = denom.notna() & (denom != 0)
+            df[pct_col] = np.nan
+            df.loc[valid_denom, pct_col] = (df.loc[valid_denom, col + '_num'] / denom[valid_denom]) * 100
+        df.drop(columns=[c for c in df.columns if c.endswith('_num')], inplace=True)
+        return df
 
     uploaded_file_tab3 = st.file_uploader("Sube tu archivo CSV.", type="csv", key="uploader_tab3")
     if uploaded_file_tab3:
@@ -127,7 +294,6 @@ with tab3:
                                         st.warning(f"API Error para {row.pair} (monto {amt}): {resp.get('message')}")
                                         continue
                                     
-                                    # Lógica robusta para encontrar datos de rutas
                                     routes_data = []
                                     if isinstance(resp.get("routes"), list) and resp.get("routes"):
                                         routes_data = resp.get("routes")
@@ -139,7 +305,6 @@ with tab3:
                                     for idx, r in enumerate(routes_data):
                                         flat_hops = [item for sublist in r.get("hops", []) for item in (sublist if isinstance(sublist, list) else [sublist])]
                                         parsed_hops, total_fee = [], Decimal(0)
-                                        # El amountIn de la ruta completa, crucial para el filtro
                                         route_amount_in_hr = normalize_raw_amount_tab3(r.get("amountIn"))
 
                                         for hop in flat_hops:
@@ -155,51 +320,50 @@ with tab3:
                                 
                                 except Exception as e: 
                                     st.error(f"Error crítico en {row.pair} (monto {amt}): {e}")
-                        progress_bar.progress((i + 1) / len(df_to_analyze))
+                        progress_bar.progress(sim_count / total_sims if total_sims > 0 else 1)
                 
                 if out_rows:
                     st.success("🎉 Simulación completada!")
                     df_out = pd.DataFrame(out_rows)
 
-                    # --- FILTRADO Y CÁLCULO DE PORCENTAJES ---
-                    st.info("Filtrando resultados para asegurar que el monto enrutado coincida con el solicitado...")
                     mask = df_out.apply(lambda r: decimal_equal(r['amount_requested'], r['route_amountIn_hr']), axis=1)
                     df_filtered = df_out[mask].reset_index(drop=True)
 
-                    # Expandir datos de hops en columnas
-                    max_hops = max(len(h) for h in df_filtered['hops_data']) if not df_filtered.empty else 0
-                    for k in range(max_hops):
-                        df_filtered[f'protocol_route_{k+1}'] = df_filtered['hops_data'].apply(lambda h: h[k]['protocol'] if len(h) > k else None)
-                        df_filtered[f'amount_route_{k+1}'] = df_filtered['hops_data'].apply(lambda h: h[k]['amount'] if len(h) > k else None)
-                    
-                    df_final = compute_amount_pct_routes(df_filtered)
-                    
-                    st.subheader("📄 Resultados de la Simulación")
-                    st.dataframe(df_final.drop(columns=['hops_data', 'route_amountIn_hr']))
-                    
-                    # --- VISUALIZACIONES ---
-                    df_final['label'] = df_final['pair'] + ' (' + df_final['inverse'].astype(str) + ')'
-                    st.subheader("📈 Gráfico de Comisiones Totales por Ruta")
-                    fig_fees = px.bar(df_final, x='amount_requested', y='total_fee_route', color='label', barmode='group', title="Comisión Total Estimada", labels={"amount_requested": "Monto Solicitado", "total_fee_route": "Comisión Total"})
-                    st.plotly_chart(fig_fees, use_container_width=True)
+                    if df_filtered.empty:
+                        st.warning("No se encontraron rutas donde el monto enrutado coincida exactamente con el solicitado.")
+                    else:
+                        max_hops = max(len(h) for h in df_filtered['hops_data']) if not df_filtered.empty else 0
+                        for k in range(max_hops):
+                            df_filtered[f'protocol_route_{k+1}'] = df_filtered['hops_data'].apply(lambda h: h[k]['protocol'] if len(h) > k else None)
+                            df_filtered[f'amount_route_{k+1}'] = df_filtered['hops_data'].apply(lambda h: h[k]['amount'] if len(h) > k else None)
+                        
+                        df_final = compute_amount_pct_routes(df_filtered)
+                        
+                        st.subheader("📄 Resultados de la Simulación")
+                        st.dataframe(df_final.drop(columns=['hops_data', 'route_amountIn_hr']))
+                        
+                        df_final['label'] = df_final['pair'] + ' (' + df_final['inverse'].astype(str) + ')'
+                        st.subheader("📈 Gráfico de Comisiones Totales por Ruta")
+                        fig_fees = px.bar(df_final, x='amount_requested', y='total_fee_route', color='label', barmode='group', title="Comisión Total Estimada", labels={"amount_requested": "Monto Solicitado", "total_fee_route": "Comisión Total"})
+                        st.plotly_chart(fig_fees, use_container_width=True)
 
-                    st.subheader("📊 Distribución de Volumen por Ruta")
-                    for i, row in df_final.iterrows():
-                        summary = f"**Par:** {row['pair']} | **Inverso:** {row['inverse']} | **Monto:** {row['amount_requested']} | **Fee Total:** {row['total_fee_route']:.8f}"
-                        with st.expander(summary):
-                            # Preparar datos para el gráfico de torta
-                            pie_data = []
-                            for k in range(1, max_hops + 1):
-                                protocol = row.get(f'protocol_route_{k}')
-                                percent = row.get(f'amount_pct_route_{k}')
-                                if protocol and pd.notna(percent):
-                                    pie_data.append({'Protocolo': protocol, 'Porcentaje': percent})
-                            
-                            if pie_data:
-                                pie_df = pd.DataFrame(pie_data).groupby('Protocolo')['Porcentaje'].sum().reset_index()
-                                fig_pie = px.pie(pie_df, values='Porcentaje', names='Protocolo', title=f'Distribución de Volumen para un trade de {row["amount_requested"]}')
-                                st.plotly_chart(fig_pie, use_container_width=True)
-                            else:
-                                st.write("No hay datos de distribución para mostrar.")
+                        st.subheader("📊 Distribución de Volumen por Ruta")
+                        for i, row in df_final.iterrows():
+                            summary = f"**Par:** {row['pair']} | **Inverso:** {row['inverse']} | **Monto:** {row['amount_requested']} | **Fee Total:** {row['total_fee_route']:.8f}"
+                            with st.expander(summary):
+                                pie_data = []
+                                for k in range(1, max_hops + 1):
+                                    protocol = row.get(f'protocol_route_{k}')
+                                    percent = row.get(f'amount_pct_route_{k}')
+                                    if protocol and pd.notna(percent) and percent > 0:
+                                        pie_data.append({'Protocolo': protocol, 'Porcentaje': percent})
+                                
+                                if pie_data:
+                                    pie_df = pd.DataFrame(pie_data).groupby('Protocolo')['Porcentaje'].sum().reset_index()
+                                    fig_pie = px.pie(pie_df, values='Porcentaje', names='Protocolo', title=f'Distribución de Volumen para un trade de {row["amount_requested"]}', hole=.3)
+                                    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                                    st.plotly_chart(fig_pie, use_container_width=True)
+                                else:
+                                    st.write("No hay datos de distribución para mostrar para esta ruta específica.")
                 else: 
-                    st.error("La simulación no produjo resultados viables tras el filtrado.")
+                    st.error("La simulación no produjo resultados viables.")
