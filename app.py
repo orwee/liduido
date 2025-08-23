@@ -330,4 +330,45 @@ with tab3:
                     st.success("🎉 Simulación completada!")
                     df_out = pd.DataFrame(out_rows)
 
-                    mask = df_out.apply(lambda r: is_amount_close(r['amount_requested'], r['route_amount
+                    mask = df_out.apply(lambda r: is_amount_close(r['amount_requested'], r['route_amountIn_hr']), axis=1)
+                    df_filtered = df_out[mask].reset_index(drop=True)
+
+                    if df_filtered.empty:
+                        st.error("No se encontraron rutas donde el monto enrutado coincida (con una tolerancia del 0.1%) con el solicitado. La API puede estar devolviendo datos inconsistentes.")
+                    else:
+                        max_hops = max(len(h) for h in df_filtered['hops_data']) if not df_filtered.empty else 0
+                        for k in range(max_hops):
+                            df_filtered[f'protocol_route_{k+1}'] = df_filtered['hops_data'].apply(lambda h: h[k]['protocol'] if len(h) > k else None)
+                            df_filtered[f'amount_route_{k+1}'] = df_filtered['hops_data'].apply(lambda h: h[k]['amount'] if len(h) > k else None)
+                        
+                        df_final = compute_amount_pct_routes(df_filtered)
+                        
+                        st.subheader("📄 Resultados de la Simulación")
+                        display_cols = [c for c in df_final.columns if c not in ['hops_data', 'route_amountIn_hr']]
+                        st.dataframe(df_final[display_cols])
+                        
+                        df_final['label'] = df_final['pair'] + ' (' + df_final['inverse'] + ')'
+                        st.subheader("📈 Gráfico de Comisiones Totales por Ruta")
+                        fig_fees = px.bar(df_final, x='amount_requested', y='total_fee_route', color='label', barmode='group', title="Comisión Total Estimada", labels={"amount_requested": "Monto Solicitado", "total_fee_route": "Comisión Total"})
+                        st.plotly_chart(fig_fees, use_container_width=True)
+
+                        st.subheader("📊 Distribución de Volumen por Ruta")
+                        for i, row in df_final.iterrows():
+                            summary = f"**Par:** {row['pair']} | **Inverso:** {row['inverse']} | **Monto:** {row['amount_requested']} | **Fee Total:** {row['total_fee_route']:.8f}"
+                            with st.expander(summary):
+                                pie_data = []
+                                for k in range(1, max_hops + 1):
+                                    protocol = row.get(f'protocol_route_{k}')
+                                    percent = row.get(f'amount_pct_route_{k}')
+                                    if protocol and pd.notna(percent) and percent > 0:
+                                        pie_data.append({'Protocolo': protocol, 'Porcentaje': percent})
+                                
+                                if pie_data:
+                                    pie_df = pd.DataFrame(pie_data).groupby('Protocolo')['Porcentaje'].sum().reset_index()
+                                    fig_pie = px.pie(pie_df, values='Porcentaje', names='Protocolo', title=f'Distribución de Volumen para un trade de {row["amount_requested"]}', hole=.3)
+                                    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                                    st.plotly_chart(fig_pie, use_container_width=True)
+                                else:
+                                    st.write("No hay datos de distribución para mostrar para esta ruta específica.")
+                else: 
+                    st.error("La simulación no produjo resultados viables.")
